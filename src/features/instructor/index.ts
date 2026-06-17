@@ -1,0 +1,1 @@
+export { InstructorShell } from "./InstructorShell";

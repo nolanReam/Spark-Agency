@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "PowerShell(npx tsc --noEmit 2>&1)",
+      "PowerShell(npx vite build 2>&1)",
+      "PowerShell(npx tsc -b 2>&1)",
+      "PowerShell($proc = Start-Process -FilePath \"npx\" -ArgumentList \"vite\" -NoNewWindow -PassThru -RedirectStandardOutput \"vite_out.txt\" -RedirectStandardError \"vite_err.txt\"; Start-Sleep 5; if \\(-not $proc.HasExited\\) { $proc.Kill\\(\\) }; Write-Output \"--- stdout ---\"; Get-Content vite_out.txt -ErrorAction SilentlyContinue; Write-Output \"--- stderr ---\"; Get-Content vite_err.txt -ErrorAction SilentlyContinue)",
+      "mcp__plugin_supabase_supabase__list_projects",
+      "mcp__plugin_supabase_supabase__apply_migration",
+      "mcp__plugin_supabase_supabase__list_tables",
+      "mcp__plugin_supabase_supabase__execute_sql",
+      "mcp__plugin_supabase_supabase__get_publishable_keys",
+      "mcp__plugin_supabase_supabase__get_project",
+      "Bash(curl -s -X POST https://tadkbymxkdncqahzshml.supabase.co/auth/v1/token?grant_type=password -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRhZGtieW14a2RuY3FhaHpzaG1sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEzMTQ1MjcsImV4cCI6MjA5Njg5MDUyN30.sgXhCHRHJqBYFJvutPklX8C7Km2imoV6cu1HxGaFu6Q' -H 'Content-Type: application/json' -d '{\"email\":\"student1@sparkagency.internal\",\"password\":\"demo1234\"}')",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl)"
+    ]
+  }
+}

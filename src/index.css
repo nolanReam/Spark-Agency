@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+/* Spark Agency Design Tokens */
+:root {
+  --bg: #F7F8FA;
+  --surface: #FFFFFF;
+  --surface-2: #F1F3F6;
+  --border: #E2E6EB;
+  --text: #13202E;
+  --text-muted: #5C6B7A;
+  --brand: #2563EB;
+  --brand-2: #3B82F6;
+  --brand-soft: #DBEAFE;
+  --accent: #F97316;
+  --accent-soft: #FFEDD5;
+  --success: #16A34A;
+  --success-soft: #DCFCE7;
+  --danger: #DC2626;
+  --danger-soft: #FEE2E2;
+  --warning: #F97316;
+  --warning-soft: #FFEDD5;
+}
+
+[data-theme="dark"] {
+  --bg: #0B1620;
+  --surface: #101D2B;
+  --surface-2: #16263A;
+  --border: #22354A;
+  --text: #E8EDF2;
+  --text-muted: #8FA3B8;
+  --brand: #5E9BD6;
+  --brand-2: #7FB4E8;
+  --brand-soft: #1E3A5F;
+  --accent: #FB923C;
+  --accent-soft: #2A2014;
+  --success: #4ADE80;
+  --success-soft: #13301F;
+  --danger: #F87171;
+  --danger-soft: #321A14;
+  --warning: #FB923C;
+  --warning-soft: #2A2014;
+}
+
+body {
+  margin: 0;
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* ─── Button interactive states ─────────────────────────── */
+
+.btn-core {
+  cursor: pointer;
+  transition: opacity 0.15s, filter 0.15s, box-shadow 0.15s;
+}
+
+.btn-core:hover:not(:disabled) {
+  filter: brightness(0.92);
+}
+
+.btn-core:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.btn-core:active:not(:disabled) {
+  filter: brightness(0.85);
+}
+
+.btn-core:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* ─── Animations ────────────────────────────────────────── */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
