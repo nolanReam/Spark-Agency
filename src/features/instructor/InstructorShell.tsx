@@ -1,14 +1,14 @@
 import { useState } from "react";
-import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, Clock, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2 } from "lucide-react";
+import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, Trash2, CheckSquare, RotateCcw } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field, ThinBar } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
 import { CONCEPTS, CLEARANCE_LEVELS } from "../../lib/constants";
 import {
-  useCases, useCreateCase, useUpdateCase, useCaseLanes, useCaseConceptWeights,
+  useCases, useCreateCase, useUpdateCase, useDeleteCase,
   useSessions, useActiveSession, useSessionParticipants, useSessionQueueHealth,
-  useHelpRequests, useStudentProgress, useCreateSession, useUpdateSessionStatus,
+  useHelpRequests, useCreateSession, useUpdateSessionStatus,
 } from "../../api/hooks";
 import type { DbCase, DbSession, EnrichedHelpRequest } from "../../api/client";
 import { generateSessionCode } from "../../api/client";
@@ -24,6 +24,7 @@ const DB_STATE_LABEL: Record<string, string> = {
   implementation_approved: "Impl Approved",
   prediction_review_claimed: "Pred Review — In Progress",
   awaiting_prediction_review: "Pred Review — Waiting",
+  prediction_revision: "Revising Prediction",
   prediction_approved: "Pred Approved",
   testing_in_scratch: "Testing",
   reflection_pending: "Reflection",
@@ -32,16 +33,51 @@ const DB_STATE_LABEL: Record<string, string> = {
 
 // ─── Case List View ─────────────────────────────────────────────────
 
-function CaseListView({ cases, onNew, onEdit }: {
+function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive, onDelete, onRestore, onView }: {
   cases: DbCase[]; onNew: () => void; onEdit: (c: DbCase) => void;
+  onPublish: (c: DbCase) => void; onDuplicate: (c: DbCase) => void; onArchive: (c: DbCase) => void;
+  onDelete: (c: DbCase) => void; onRestore: (c: DbCase) => void; onView: (c: DbCase) => void;
 }) {
   const [tab, setTab] = useState("published");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const filtered = cases.filter(c => c.status === tab);
   const counts = { draft: cases.filter(c => c.status === "draft").length, published: cases.filter(c => c.status === "published").length, archived: cases.filter(c => c.status === "archived").length };
 
+  const toggleSelect = (id: string) => {
+    const next = new Set(selected);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    setSelected(next);
+  };
+  const exitSelect = () => { setSelectMode(false); setSelected(new Set()); };
+
+  // Derive allowed bulk actions from the selected cases' states
+  const selectedCases = cases.filter(c => selected.has(c.id));
+  const selectedStates = new Set(selectedCases.map(c => c.status));
+  const allSameState = selectedStates.size === 1;
+  const singleState = allSameState ? [...selectedStates][0] : null;
+
+  const bulkDraft = allSameState && singleState === "draft";
+  const bulkPublished = allSameState && singleState === "published";
+  const bulkArchived = allSameState && singleState === "archived";
+
+  const handleBulk = (action: (c: DbCase) => void) => {
+    selectedCases.forEach(action);
+    exitSelect();
+  };
+
   return (
     <div>
-      <TopBar title="Case Builder" subtitle="Manage your curriculum case files" right={<Btn variant="primary" icon={Plus} onClick={onNew}>New case</Btn>} />
+      <TopBar title="Case Builder" subtitle="Manage your curriculum case files"
+        right={<div style={{ display: "flex", gap: "0.5rem" }}>
+          {selectMode ? (
+            <Btn variant="ghost" size="sm" onClick={exitSelect}>Cancel</Btn>
+          ) : (
+            <Btn variant="ghost" size="sm" icon={CheckSquare} onClick={() => setSelectMode(true)}>Select</Btn>
+          )}
+          <Btn variant="primary" icon={Plus} onClick={onNew}>New case</Btn>
+        </div>}
+      />
       <div style={{ display: "flex", gap: "0.25rem", background: "var(--surface-2)", borderRadius: "10px", padding: "0.25rem", border: "1px solid var(--border)", width: "fit-content", marginBottom: "1.25rem" }}>
         {(["draft", "published", "archived"] as const).map(s => (
           <button key={s} onClick={() => setTab(s)} style={{ padding: "0.4rem 0.85rem", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "0.78rem", fontWeight: 700, fontFamily: "'IBM Plex Sans',sans-serif", textTransform: "capitalize", background: tab === s ? "var(--surface)" : "transparent", color: tab === s ? "var(--brand)" : "var(--text-muted)", boxShadow: tab === s ? "0 1px 2px rgba(0,0,0,0.06)" : "none" }}>
@@ -49,11 +85,38 @@ function CaseListView({ cases, onNew, onEdit }: {
           </button>
         ))}
       </div>
+
+      {/* Bulk action bar */}
+      {selectMode && selected.size > 0 && (
+        <Card style={{ padding: "0.75rem 1rem", marginBottom: "1rem", border: "1px solid var(--brand)", background: "var(--brand-soft)", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", justifyContent: "space-between" }}>
+          <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>{selected.size} selected</span>
+          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
+            {bulkDraft && (
+              <>
+                <Btn variant="primary" size="sm" onClick={() => handleBulk(onPublish)}>Publish</Btn>
+                <Btn variant="ghost" size="sm" icon={Copy} onClick={() => handleBulk(onDuplicate)}>Duplicate</Btn>
+                <Btn variant="subtle" size="sm" icon={Archive} onClick={() => handleBulk(onArchive)}>Archive</Btn>
+              </>
+            )}
+            {bulkPublished && (
+              <Btn variant="subtle" size="sm" icon={Archive} onClick={() => handleBulk(onArchive)}>Archive</Btn>
+            )}
+            {bulkArchived && (
+              <>
+                <Btn variant="ghost" size="sm" icon={RotateCcw} onClick={() => handleBulk(onRestore)}>Restore</Btn>
+                <Btn variant="danger" size="sm" icon={Trash2} onClick={() => { handleBulk(onDelete); }}>Delete</Btn>
+              </>
+            )}
+          </div>
+        </Card>
+      )}
+
       {filtered.length === 0 && <Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>No {tab} cases.</Card>}
       <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
         {filtered.map(c => (
           <Card key={c.id} style={{ padding: "1rem 1.25rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
+              {selectMode && <input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleSelect(c.id)} style={{ flexShrink: 0, width: 16, height: 16, accentColor: "var(--brand)" }} />}
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.35rem", flexWrap: "wrap" }}>
                   <span style={{ fontFamily: "'IBM Plex Mono',sans-serif", fontSize: "0.75rem", color: "var(--text-muted)", fontWeight: 600 }}>{c.case_code ?? "—"}</span>
@@ -67,12 +130,31 @@ function CaseListView({ cases, onNew, onEdit }: {
                   <span style={{ display: "flex", gap: "0.3rem" }}>{(c.concept_tags ?? []).map((concept: string) => <Badge key={concept}>{concept}</Badge>)}</span>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
-                <Btn variant="ghost" size="sm" icon={Pencil} onClick={() => onEdit(c)}>Edit</Btn>
-                <Btn variant="ghost" size="sm" icon={Copy}>Duplicate</Btn>
-                {c.status === "draft" && <Btn variant="primary" size="sm">Publish</Btn>}
-                {c.status === "published" && <Btn variant="subtle" size="sm" icon={Archive}>Archive</Btn>}
-              </div>
+              {!selectMode && (
+                <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+                  {c.status === "draft" && (
+                    <>
+                      <Btn variant="ghost" size="sm" icon={Pencil} onClick={() => onEdit(c)}>Edit</Btn>
+                      <Btn variant="primary" size="sm" onClick={() => onPublish(c)}>Publish</Btn>
+                      <Btn variant="ghost" size="sm" icon={Copy} onClick={() => onDuplicate(c)}>Duplicate</Btn>
+                      <Btn variant="subtle" size="sm" icon={Archive} onClick={() => onArchive(c)}>Archive</Btn>
+                    </>
+                  )}
+                  {c.status === "published" && (
+                    <>
+                      <Btn variant="ghost" size="sm" icon={Eye} onClick={() => onView(c)}>View</Btn>
+                      <Btn variant="subtle" size="sm" icon={Archive} onClick={() => onArchive(c)}>Archive</Btn>
+                    </>
+                  )}
+                  {c.status === "archived" && (
+                    <>
+                      <Btn variant="ghost" size="sm" icon={Eye} onClick={() => onView(c)}>View</Btn>
+                      <Btn variant="ghost" size="sm" icon={RotateCcw} onClick={() => onRestore(c)}>Restore</Btn>
+                      <Btn variant="danger" size="sm" icon={Trash2} onClick={() => onDelete(c)}>Remove</Btn>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </Card>
         ))}
@@ -128,7 +210,8 @@ function formToDbPartial(f: CaseFormData): Partial<DbCase> {
     case_code: f.case_code || null, title: f.title,
     client_brief: f.client_brief, min_clearance: f.min_clearance,
     reputation_reward: f.reputation_reward, estimated_minutes: f.estimated_minutes,
-    mission: f.mission, tools_allowed: f.tools_allowed ? f.tools_allowed.split(",").map(s => s.trim()).filter(Boolean) : [],
+    mission: f.mission, difficulty_lane: "core",
+    tools_allowed: f.tools_allowed ? f.tools_allowed.split(",").map(s => s.trim()).filter(Boolean) : [],
     predict_prove_prompt: f.predict_prove_prompt || null,
     reflection_prompt: f.reflection_prompt || null,
     transfer_hint: f.transfer_hint || null,
@@ -153,6 +236,12 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
 
   const handleSaveDraft = () => {
     const data = formToDbPartial(form);
+    if (isNew) createCase.mutate(data, { onSuccess: () => onBack() });
+    else updateCase.mutate({ id: form.id!, updates: data }, { onSuccess: () => onBack() });
+  };
+
+  const handlePublish = () => {
+    const data = { ...formToDbPartial(form), status: "published" as const };
     if (isNew) createCase.mutate(data, { onSuccess: () => onBack() });
     else updateCase.mutate({ id: form.id!, updates: data }, { onSuccess: () => onBack() });
   };
@@ -244,7 +333,7 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
           <div style={{ display: "flex", gap: "0.6rem", justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={onBack}>Cancel</Btn>
             <Btn variant="subtle" onClick={handleSaveDraft}>Save as draft</Btn>
-            <Btn variant="primary">Publish case</Btn>
+            <Btn variant="primary" onClick={handlePublish}>Publish case</Btn>
           </div>
         </div>
       </div>
@@ -254,8 +343,8 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
 
 // ─── Session List View ──────────────────────────────────────────────
 
-function SessionListView({ sessions, onNew, onMonitor }: {
-  sessions: DbSession[]; onNew: () => void; onMonitor: (s: DbSession) => void;
+function SessionListView({ sessions, onNew, onMonitor, onSummary }: {
+  sessions: DbSession[]; onNew: () => void; onMonitor: (s: DbSession) => void; onSummary: (s: DbSession) => void;
 }) {
   const statusTone = (s: string) => s === "active" ? "success" as const : s === "closed" ? "neutral" as const : "brand" as const;
   return (
@@ -278,7 +367,7 @@ function SessionListView({ sessions, onNew, onMonitor }: {
             </div>
             <div style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
               {(s.status === "active" || s.status === "open") && <Btn variant="primary" size="sm" onClick={() => onMonitor(s)}>Monitor</Btn>}
-              {s.status === "closed" && <Btn variant="ghost" size="sm">Summary</Btn>}
+              {s.status === "closed" && <Btn variant="ghost" size="sm" onClick={() => onSummary(s)}>View Summary</Btn>}
             </div>
           </div>
         </Card>
@@ -295,8 +384,6 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const createSession = useCreateSession();
-  const updateStatus = useUpdateSessionStatus();
-  const [createdSessionId, setCreatedSessionId] = useState<string | null>(null);
   const publishedCases = cases.filter(c => c.status === "published");
   const toggleCase = (id: string) => { if (selectedCases.includes(id)) setSelectedCases(selectedCases.filter(c => c !== id)); else setSelectedCases([...selectedCases, id]); };
 
@@ -304,36 +391,24 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
     setError(null);
     const code = generateSessionCode();
     setSessionCode(code);
-    // Immediately persist the draft session
-    createSession.mutate(
-      { sessionCode: code, caseIds: selectedCases, instructorId: user?.id },
-      {
-        onSuccess: (data) => {
-          setCreatedSessionId(data.id);
-        },
-        onError: (err) => {
-          setError(err instanceof Error ? err.message : "Failed to create session");
-          setSessionCode(null);
-        },
-      }
-    );
+    // No API call — session is not persisted until explicitly opened
   };
 
   const handleOpenSession = () => {
-    if (!createdSessionId) return;
-    updateStatus.mutate(
-      { sessionId: createdSessionId, status: "open" },
+    if (!sessionCode || selectedCases.length === 0) return;
+    setError(null);
+    createSession.mutate(
+      { sessionCode, caseIds: selectedCases, instructorId: user?.id, status: "open" },
       {
         onSuccess: () => onBack(),
         onError: (err) => {
-          setError(err instanceof Error ? err.message : "Failed to open session");
+          setError(err instanceof Error ? err.message : "Failed to create session");
         },
       }
     );
   };
 
-  const isCreating = createSession.isPending;
-  const isOpening = updateStatus.isPending;
+  const isOpening = createSession.isPending;
 
   return (
     <div>
@@ -364,24 +439,15 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
               <Btn
                 variant={sessionCode ? "subtle" : "accent"}
                 onClick={handleGenerateCode}
-                disabled={isCreating}
                 style={{ marginTop: sessionCode ? "0.25rem" : "0.5rem", width: "100%" }}
               >
-                {isCreating ? (
-                  <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                    <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Creating…
-                  </span>
-                ) : sessionCode ? (
-                  "Regenerate session code"
-                ) : (
-                  "Generate session code"
-                )}
+                {sessionCode ? "Regenerate session code" : "Generate session code"}
               </Btn>
             </div>
           </Card>
           <Card style={{ padding: "1.25rem" }}>
             <SectionLabel icon={FileText}>Session lifecycle</SectionLabel>
-            {[{ state: "draft", label: "Draft", body: "Code generated, cases assigned." }, { state: "open", label: "Open", body: "Code is live. Students can join." }, { state: "active", label: "Active", body: "Workshop is live — queues open." }, { state: "closing", label: "Closing", body: "New requests blocked." }, { state: "closed", label: "Closed", body: "Session ended." }].map((s, i) => (
+            {[{ state: "open", label: "Open", body: "Code is live. Students can join." }, { state: "active", label: "Active", body: "Workshop is live — queues open." }, { state: "closing", label: "Closing", body: "New requests blocked." }, { state: "closed", label: "Closed", body: "Session ended." }].map((s, i) => (
               <div key={s.state} style={{ display: "flex", gap: "0.6rem", marginTop: "0.5rem" }}>
                 <div style={{ width: 24, height: 24, borderRadius: "50%", background: i === 0 ? "var(--brand)" : "var(--surface-2)", color: i === 0 ? "#fff" : "var(--text-muted)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.7rem", fontWeight: 700, flexShrink: 0 }}>{i + 1}</div>
                 <div><div style={{ fontWeight: 700, fontSize: "0.82rem" }}>{s.label}</div><div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{s.body}</div></div>
@@ -404,7 +470,7 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
             <Btn
               variant="primary"
               icon={PlayCircle}
-              disabled={!sessionCode || selectedCases.length === 0 || isCreating || isOpening}
+              disabled={!sessionCode || selectedCases.length === 0 || isOpening}
               onClick={handleOpenSession}
             >
               {isOpening ? "Opening…" : "Open session"}
@@ -423,7 +489,9 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
   queueHealth: { state: string }[]; helpRequests: EnrichedHelpRequest[]; onBack: (() => void) | null;
 }) {
   const [closing, setClosing] = useState(false);
-  const [closed, setClosed] = useState(false);
+  const [closed, setClosed] = useState(session?.status === "closed");
+  const [isClosing, setIsClosing] = useState(false);
+  const updateStatus = useUpdateSessionStatus();
 
   const studentsPresent = participants.filter(p => p.role === "student").length;
   const volunteersActive = participants.filter(p => p.role === "volunteer").length;
@@ -456,17 +524,31 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
 
   return (
     <div>
-      <TopBar title="Session Monitor" subtitle={sessionTitle}
-        right={<div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+      <TopBar title={closed ? "Session Summary" : "Session Monitor"} subtitle={sessionTitle}
+        right={closed ? <Badge tone="neutral">Closed</Badge> : (
+        <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
           <Badge tone="success">Session live</Badge>
-          {!closing ? <Btn variant="subtle" icon={StopCircle} size="sm" onClick={() => setClosing(true)}>Close session</Btn> : (
+          {isClosing ? (
+            <div style={{ display: "flex", gap: "0.4rem", alignItems: "center", color: "var(--text-muted)", fontSize: "0.78rem" }}>
+              <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Closing…
+            </div>
+          ) : !closing ? (
+            <Btn variant="subtle" icon={StopCircle} size="sm" onClick={() => setClosing(true)}>Close session</Btn>
+          ) : (
             <div style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
               <span style={{ fontSize: "0.8rem", color: "var(--danger)" }}>Confirm close?</span>
-              <Btn variant="danger" size="sm" onClick={() => setClosed(true)}>Yes, close</Btn>
+              <Btn variant="danger" size="sm" disabled={!session} onClick={() => {
+                if (!session) return;
+                setIsClosing(true);
+                updateStatus.mutate({ sessionId: session.id, status: "closed" }, {
+                  onSuccess: () => { setClosed(true); setIsClosing(false); },
+                  onError: () => setIsClosing(false),
+                });
+              }}>Yes, close</Btn>
               <Btn variant="ghost" size="sm" onClick={() => setClosing(false)}>Cancel</Btn>
             </div>
           )}
-        </div>}
+        </div>)}
         onBack={onBack ?? (() => {})}
       />
       {closing && !closed && (
@@ -553,7 +635,7 @@ function AnalyticsView() {
         <SectionLabel icon={Target}>Case difficulty — cohort average accuracy</SectionLabel>
         {COHORT_DIFFICULTY.map(c => (
           <div key={c.caseTitle} style={{ marginTop: "0.7rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}><span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.caseTitle}</span><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{c.avgAccuracy}% avg · {c.attempts} attempts{c.avgAccuracy < 70 && <Badge tone="warning" style={{ marginLeft: "0.4rem" }}>Needs attention</Badge>}</span></div>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}><span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.caseTitle}</span><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{c.avgAccuracy}% avg · {c.attempts} attempts{c.avgAccuracy < 70 && <span style={{ marginLeft: "0.4rem" }}><Badge tone="warning">Needs attention</Badge></span>}</span></div>
             <ThinBar value={c.avgAccuracy} max={100} color={c.avgAccuracy < 70 ? "var(--warning)" : "var(--brand)"} />
           </div>
         ))}
@@ -599,20 +681,25 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
 }) {
   const [view, setView] = useState("operations");
   const [editingCase, setEditingCase] = useState<DbCase | null>(null);
+  const [caseBuilderOpen, setCaseBuilderOpen] = useState(false);
   const [sessionBuilderOpen, setSessionBuilderOpen] = useState(false);
   const [sessionMonitorOpen, setSessionMonitorOpen] = useState(false);
   const [monitoringSession, setMonitoringSession] = useState<DbSession | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Live data
   const { data: cases, isLoading: casesLoading } = useCases();
   const { data: sessions, isLoading: sessionsLoading } = useSessions();
+  const createCase = useCreateCase();
+  const updateCase = useUpdateCase();
+  const deleteCase = useDeleteCase();
   const { data: activeSession } = useActiveSession();
   const { data: participants } = useSessionParticipants(activeSession?.id ?? "");
   const { data: queueHealth } = useSessionQueueHealth(activeSession?.id ?? "");
   const { data: helpRequests } = useHelpRequests();
 
   // Roster progress data - fetch all student progress for roster view
-  const studentIds = (participants ?? []).filter(p => p.role === "student").map(p => p.student_id);
+  // studentIds unused and removed to resolve compilation error
   const progressMap: Record<string, { state: string; case_id: string }> = {};
   // For roster, we use a simplified approach since we can't easily batch query
   // The roster will show limited data if we can't get progress
@@ -641,7 +728,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
     </Card>
   );
 
-  const handleSetView = (v: string) => { setView(v); setEditingCase(null); setSessionBuilderOpen(false); setSessionMonitorOpen(false); };
+  const handleSetView = (v: string) => { setView(v); setEditingCase(null); setCaseBuilderOpen(false); setSessionBuilderOpen(false); setSessionMonitorOpen(false); };
 
   const renderMain = () => {
     if (loading && (view === "cases" || view === "sessions")) {
@@ -651,15 +738,62 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
     }
 
     if (view === "cases") {
+      if (caseBuilderOpen) return <CaseBuilderForm existing={null} onBack={() => setCaseBuilderOpen(false)} />;
       if (editingCase) return <CaseBuilderForm existing={editingCase} onBack={() => setEditingCase(null)} />;
-      return <CaseListView cases={cases ?? []} onNew={() => setEditingCase(null)} onEdit={c => setEditingCase(c)} />;
+      return (
+        <>
+          {errorMsg && (
+            <Card style={{ padding: "0.75rem 1rem", marginBottom: "1rem", border: "1px solid var(--danger)", background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.85rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{errorMsg}</span>
+              <Btn variant="ghost" size="sm" onClick={() => setErrorMsg(null)}>Dismiss</Btn>
+            </Card>
+          )}
+          <CaseListView
+            cases={cases ?? []}
+            onNew={() => setCaseBuilderOpen(true)}
+            onEdit={c => setEditingCase(c)}
+            onView={c => setEditingCase(c)}
+          onPublish={c => updateCase.mutate({ id: c.id, updates: { status: "published" } }, {
+            onError: (err: Error) => setErrorMsg(`Publish failed: ${err.message}`),
+          })}
+          onDuplicate={c => {
+            const form = dbToForm(c);
+            delete form.id;
+            const suffix = ` (copy ${Date.now().toString(36)})`;
+            form.case_code = `${form.case_code}${suffix}`;
+            form.title = `${form.title} (copy)`;
+            const newCase = formToDbPartial(form);
+            createCase.mutate(newCase, {
+              onSuccess: () => setErrorMsg(null),
+              onError: (err: Error) => setErrorMsg(`Duplicate failed: ${err.message}`),
+            });
+          }}
+          onArchive={c => updateCase.mutate({ id: c.id, updates: { status: "archived" } }, {
+            onError: (err: Error) => setErrorMsg(`Archive failed: ${err.message}`),
+          })}
+          onDelete={c => deleteCase.mutate(c.id, {
+            onError: (err: Error) => setErrorMsg(`Delete failed: ${err.message}`),
+          })}
+          onRestore={c => updateCase.mutate({ id: c.id, updates: { status: "draft" } }, {
+            onError: (err: Error) => setErrorMsg(`Restore failed: ${err.message}`),
+          })}
+        />
+        </>
+      );
     }
     if (view === "sessions") {
       if (sessionBuilderOpen) return <SessionBuilderView cases={cases ?? []} onBack={() => setSessionBuilderOpen(false)} />;
       if (sessionMonitorOpen && monitoringSession) return <SessionMonitorView session={monitoringSession} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={() => setSessionMonitorOpen(false)} />;
-      return <SessionListView sessions={sessions ?? []} onNew={() => setSessionBuilderOpen(true)} onMonitor={s => { setMonitoringSession(s); setSessionMonitorOpen(true); }} />;
+      return (
+        <SessionListView
+          sessions={sessions ?? []}
+          onNew={() => setSessionBuilderOpen(true)}
+          onMonitor={s => { setMonitoringSession(s); setSessionMonitorOpen(true); }}
+          onSummary={s => { setMonitoringSession(s); setSessionMonitorOpen(true); }}
+        />
+      );
     }
-    if (view === "operations") return <SessionMonitorView session={activeSession} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} />;
+    if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} />;
     if (view === "analytics") return <AnalyticsView />;
     if (view === "roster") return <RosterView participants={participants ?? []} progressMap={progressMap} />;
     return null;

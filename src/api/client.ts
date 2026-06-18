@@ -81,7 +81,7 @@ export async function getStudentProfile(userId: string) {
 
 // ─── Cases ───────────────────────────────────────────────
 
-export async function getCases(status?: string, orgId?: string) {
+export async function getCases(status?: string, _orgId?: string) {
   let q = supabase.from("cases").select("*").order("created_at", { ascending: false });
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
@@ -119,6 +119,11 @@ export async function updateCase(caseId: string, updates: Partial<DbCase>) {
   return data as DbCase;
 }
 
+export async function deleteCase(caseId: string) {
+  const { error } = await supabase.from("cases").delete().eq("id", caseId);
+  if (error) throw error;
+}
+
 // ─── Sessions ────────────────────────────────────────────
 
 /** Generate a unique Spark Agency session code */
@@ -127,14 +132,14 @@ export function generateSessionCode(): string {
   return `AGENCY-${n}`;
 }
 
-export async function createSession(sessionCode: string, caseIds: string[], instructorId?: string) {
+export async function createSession(sessionCode: string, caseIds: string[], instructorId?: string, status: string = "draft") {
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       session_code: sessionCode,
       case_ids: caseIds,
       instructor_id: instructorId || null,
-      status: "draft",
+      status,
     })
     .select()
     .single();
@@ -410,7 +415,7 @@ export async function getEnrichedHelpRequests() {
   });
 }
 
-export async function getReviewQueue(userId: string, reviewType?: string) {
+export async function getReviewQueue(_userId: string, reviewType?: string) {
   let q = supabase
     .from("reviews")
     .select("*, case_progress!inner(student_id, case_id, state), predictions(*)")

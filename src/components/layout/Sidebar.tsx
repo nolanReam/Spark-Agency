@@ -1,7 +1,7 @@
 import type { ReactNode, ElementType } from "react";
 import { LogOut } from "lucide-react";
 import { Brand } from "./Brand";
-import { ThemeToggle } from "./ThemeToggle";
+// ThemeToggle import removed because it is unused
 import type { UserRole } from "../../hooks/useAuth";
 
 interface SidebarItem {
@@ -12,7 +12,7 @@ interface SidebarItem {
 }
 
 export function Sidebar({
-  items, view, setView, role, theme, setTheme, bottomContent, onSignOut,
+  items, view, setView, role, theme: _theme, setTheme: _setTheme, bottomContent, onSignOut,
 }: {
   items: SidebarItem[];
   view: string;

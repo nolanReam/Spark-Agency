@@ -10,11 +10,15 @@ import {
   useCases,
   useActiveSession,
 } from "../../api/hooks";
-import type { DbCase } from "../../api/client";
+// DbCase import removed
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function StudentCases({ onOpenCase }: { onOpenCase: () => void }) {
+export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
+  onOpenCase: () => void;
+  onStartCase: (caseId: string) => void;
+  onViewCase: (caseId: string) => void;
+}) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
 
@@ -96,7 +100,8 @@ export function StudentCases({ onOpenCase }: { onOpenCase: () => void }) {
               {availableCases.map(c => {
                 const locked = clearanceLevel < (c.min_clearance ?? 1);
                 return (
-                  <Card key={c.id} style={{ padding: "1.1rem", opacity: locked ? 0.55 : 1, position: "relative" }}>
+                  <Card key={c.id} style={{ padding: "1.1rem", opacity: locked ? 0.55 : 1, position: "relative", cursor: locked ? "default" : "pointer" }}
+                    onClick={() => { if (!locked) onStartCase(c.id); }}>
                     {locked && <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}><Lock size={14} color="var(--text-muted)" /></div>}
                     <div style={{ display: "flex", gap: "0.35rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
                       {(c.concept_tags ?? []).map((concept: string) => <Badge key={concept}>{concept}</Badge>)}
@@ -147,7 +152,7 @@ export function StudentCases({ onOpenCase }: { onOpenCase: () => void }) {
                   {completedOpen === c.id && (
                     <div style={{ padding: "0 0.85rem 0.85rem", fontSize: "0.82rem", color: "var(--text-muted)", borderTop: "1px solid var(--border)" }}>
                       <p style={{ margin: "0.6rem 0 0" }}>This case has been completed. You can review your dossier but cannot resubmit predictions or reflections.</p>
-                      <div style={{ marginTop: "0.6rem" }}><Btn variant="ghost" size="sm">View dossier (read-only)</Btn></div>
+                      <div style={{ marginTop: "0.6rem" }}><Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); onViewCase(c.id); }}>View dossier (read-only)</Btn></div>
                     </div>
                   )}
                   {i < completedCases.length - 1 && <div style={{ height: 1, background: "var(--border)", margin: "0 0.85rem" }} />}

@@ -1,4 +1,4 @@
-import type { ReactNode, ChangeEventHandler } from "react";
+import type { ReactNode } from "react";
 
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
   return (

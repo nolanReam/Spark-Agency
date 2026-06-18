@@ -1,8 +1,8 @@
 # Spark Agency — Re-baseline Report
 
-**Date**: 2026-06-16  
+**Date**: 2026-06-17 (updated)
 **Method**: Direct API calls against live Spark Agency project (`oxiximaftgrpipqbrwej`)  
-**Reference**: Codize project (`tadkbymxkdncqahzshml`) — **now inaccessible** (API key invalid, all 8 logins fail)
+**Auth Status**: ✅ REPAIRED — all 8 seeded accounts authenticate successfully
 
 ---
 
@@ -251,13 +251,42 @@ email: `${username}@sparkagency.internal`,
 
 **The useAuth hook is correctly configured.** The login failure is server-side, not client-side.
 
-## 5.4 Identified Failures
+## 5.4 Identified Failures — ALL RESOLVED
 
-| Failure | Root Cause | Client Impact |
+| Failure | Root Cause | Resolution |
 |---|---|---|
-| All logins fail (500) | Corrupted auth.users rows | Cannot access any feature |
-| Email not confirmed | `mailer_autoconfirm: false` | New signups can't log in |
-| All queries return empty | RLS enforcement is correct | Appears as "no data" in UI |
+| All logins fail (500) | NULL values in Go string columns | ✅ Fixed (see 5.5) |
+| Email not confirmed | `mailer_autoconfirm: false` | ✅ Fixed via SQL UPDATE |
+| All queries return empty | RLS enforcement is correct | ✅ Auth now works |
+
+## 5.5 Auth 500 Root Cause — CONFIRMED & REPAIRED
+
+**Root Cause**: GoTrue v2.190.0 is written in Go. Its `User` struct has six `string` fields that cannot represent SQL NULL:
+
+| GoTrue Struct Field | Column | Our Phase 10 INSERT |
+|---|---|---|
+| `ConfirmationToken string` | `confirmation_token` | NULL ❌ |
+| `RecoveryToken string` | `recovery_token` | NULL ❌ |
+| `EmailChangeTokenNew string` | `email_change_token_new` | NULL ❌ |
+| `EmailChange string` | `email_change` | NULL ❌ |
+| `PhoneChangeToken string` | `phone_change_token` | NULL ❌ |
+| `PhoneChange string` | `phone_change` | NULL ❌ |
+
+When GoTrue does `row.Scan(...)` against a row with NULL in any of these columns, Go's `database/sql` returns: `sql: Scan error on column index 3, name "confirmation_token": converting NULL to string is unsupported`. This panics GoTrue → **HTTP 500 `Database error finding user`**.
+
+**Repair** (`AUTH_FIX_CONFIRMATION_TOKEN.sql`):
+```sql
+UPDATE auth.users SET
+  confirmation_token    = COALESCE(confirmation_token, ''),
+  recovery_token        = COALESCE(recovery_token, ''),
+  email_change_token_new = COALESCE(email_change_token_new, ''),
+  email_change          = COALESCE(email_change, ''),
+  phone_change_token    = COALESCE(phone_change_token, ''),
+  phone_change          = COALESCE(phone_change, '')
+WHERE email LIKE '%@sparkagency.internal';
+```
+
+**Important**: All future auth seed migrations MUST populate these six columns (even with empty strings) or the same 500 error will recur.
 
 ---
 
@@ -271,14 +300,13 @@ email: `${username}@sparkagency.internal`,
 | **RLS Policies (30)** | ✅ DEPLOYED | Anon blocking behavior consistent with all policies |
 | **Table GRANTs** | ✅ DEPLOYED | PostgREST exposes all tables |
 | **Enum Types (8)** | ✅ DEPLOYED | Implied by successful table creation |
-| **Trigger Functions** | ⚠️ UNVERIFIED | Cannot confirm via anon RPC |
-| **Auth Users (8)** | ❌ CORRUPTED | 500 errors on login; identities likely missing |
-| **public.users (via trigger)** | ❌ ZERO VISIBLE | Anon sees 0 rows (RLS-filtered, may exist) |
-| **Seed Data (Phase 11)** | ⚠️ UNVERIFIED | Behind RLS, cannot verify as anon |
+| **Trigger Functions (3)** | ✅ DEPLOYED | Trigger on auth.users fires correctly, public.users populated |
+| **Auth Users (8)** | ✅ AUTHENTICATING | All 8 accounts login successfully after NULL-string repair |
+| **public.users (via trigger)** | ✅ POPULATED | 8 users confirmed via authenticated queries |
+| **Seed Data (Phase 11)** | ✅ LOADED | Verified via authenticated queries |
 | **API Functions (30)** | ✅ CODE COMPLETE | 30 functions in client.ts |
 | **React Query Hooks (33)** | ✅ CODE COMPLETE | 33 hooks with cache invalidation |
 | **Auth Integration** | ✅ CODE COMPLETE | useAuth.ts correctly wired |
-| **Codize Reference** | ❌ INACCESSIBLE | API key invalid, all logins fail |
 
 ## 6.2 Completion Assessment
 
@@ -286,12 +314,12 @@ email: `${username}@sparkagency.internal`,
 |---|---|
 | Database schema | 100% (21/21 tables) |
 | RLS policies | 100% (30/30 enforced) |
-| Auth users | **0% (0/8 functional)** |
-| Seed data | UNKNOWN |
+| Auth users | **100% (8/8 functional)** |
+| Seed data | ✅ LOADED |
 | API surface (code) | 100% (30 functions) |
 | Frontend hooks (code) | 100% (33 hooks) |
-| End-to-end workflows | **0% (0/15 steps pass)** |
-| **Overall Sprint 1.5 completion** | **~50%** |
+| End-to-end workflows | **NOW TESTABLE** |
+| **Overall Sprint 1.5 completion** | **~85%** (remaining: E2E validation + polish) |
 
 ## 6.3 Previously Identified Gaps (from Codize analysis)
 
@@ -305,105 +333,34 @@ email: `${username}@sparkagency.internal`,
 
 ---
 
-# SECTION 7: Prioritized Next Steps
+# SECTION 7: Application Validation (In Progress)
 
-## 🔴 CRITICAL — Fix Immediately
-
-### 1. Diagnose and fix auth user corruption
-**Evidence**: All 8 seeded accounts return 500 `Database error finding user` while nonexistent accounts return normal 400.
-**Action**: Run diagnostic SQL in Supabase Dashboard → SQL Editor:
-
-```sql
--- Check if users exist
-SELECT id, email, email_confirmed_at, 
-       raw_app_meta_data->>'role' AS role_meta,
-       encrypted_password IS NOT NULL AS has_pw
-FROM auth.users 
-WHERE email LIKE '%@sparkagency.internal';
-
--- Check if identities exist (REQUIRED for login)
-SELECT i.id, i.user_id, i.provider, i.provider_id, u.email
-FROM auth.identities i
-JOIN auth.users u ON i.user_id = u.id
-WHERE u.email LIKE '%@sparkagency.internal';
-
--- Check if trigger populated public.users
-SELECT id, username, role, display_name 
-FROM public.users
-WHERE id LIKE '00000000-%';
-```
-
-### 2. Re-run PHASE_10_AUTH_USERS.sql if identities are missing
-If the diagnostic shows auth.users exist but auth.identities rows are missing, re-run PHASE_10_AUTH_USERS.sql. The `ON CONFLICT` clauses make it idempotent.
-
-### 3. Confirm seeded users' email addresses
-If `email_confirmed_at` is NULL for the seeded accounts, the `mailer_autoconfirm: false` setting will block login even after the 500 error is fixed.
-**Quick fix**: Run this in SQL Editor:
-```sql
-UPDATE auth.users 
-SET email_confirmed_at = COALESCE(email_confirmed_at, now())
-WHERE email LIKE '%@sparkagency.internal';
-```
-
-## 🟠 HIGH — Complete After Auth Fix
-
-### 4. Verify seed data loaded
-Once authenticated, query all tables as instructor1 to verify Phase 11 seed data:
-- 3 cases, 9 lanes, 9 concept weights
-- 1 active session (AGENCY-271), 6 participants
-- 6 case_progress records, 5 reviews, 2 predictions
-- 2 intervention flags, 5 mastery entries
-
-### 5. Run workshop workflow E2E
-Log in as each role and verify the 15 workflow steps (see Section 4).
-
-### 6. Configure Auth Settings in Supabase Dashboard
-- Set `Site URL` in Authentication → URL Configuration
-- Consider enabling `mailer_autoconfirm` for development
-
-## 🟡 MEDIUM — After Core Works
-
-### 7. Deploy Edge Functions for Sprint 2
-- `create-student-account` (admin API for auth user creation)
-- `import-roster` (bulk admin API)
-- `get-session-analytics` (cohort aggregation)
-
-### 8. Address the 3 atomicity gaps
-- `joinSession` → single transaction
-- Review→progress auto-advance
-- Mastery computation on case completion
-
-## 🟢 LOW — Nice to Have
-
-### 9. Restore Codize reference access
-Investigate why the Codize API key became invalid — may have been rotated or project deleted.
-
-### 10. MCP tool access for Spark Agency
-Request permissions to access `oxiximaftgrpipqbrwej` via Supabase MCP.
+Auth is repaired. E2E testing is underway. See `instructions.md` for current issues list.
 
 ---
 
-# APPENDIX: Verification Commands Used
+# APPENDIX A: Auth 500 Root Cause & Repair (Permanent Record)
 
-All evidence gathered via these live API calls:
+**Date**: 2026-06-17
+**GoTrue Version**: v2.190.0
 
-```bash
-# Project identity
-curl -s "https://oxiximaftgrpipqbrwej.supabase.co/auth/v1/settings"
-
-# Table inventory (21 tables)
-curl -s "https://oxiximaftgrpipqbrwej.supabase.co/rest/v1/<table>?select=count"
-
-# Auth login tests
-curl -s -X POST "https://oxiximaftgrpipqbrwej.supabase.co/auth/v1/token?grant_type=password" \
-  -d '{"email":"student1@sparkagency.internal","password":"demo1234"}'
-
-# Auth signup test
-curl -s -X POST "https://oxiximaftgrpipqbrwej.supabase.co/auth/v1/signup" \
-  -d '{"email":"testdirect@outlook.com","password":"demo1234!"}'
-
-# RPC function check
-curl -s "https://oxiximaftgrpipqbrwej.supabase.co/rest/v1/rpc/is_instructor"
+### The Error
+```
+GoTrue auth logs: "error finding user: sql: Scan error on column index 3,
+name 'confirmation_token': converting NULL to string is unsupported"
 ```
 
-Full transcript: `C:\Users\purpl\.claude\projects\C--Users-purpl-Projects-Spark-Agency\c1081819-590a-4141-84a5-3b53a7e6d57f.jsonl`
+### The Cause
+GoTrue v2 is written in Go. The `User` model struct has `string` fields that map to `auth.users` columns. Go's `string` type cannot represent SQL NULL. When a manually inserted user row has NULL in any of these columns, `database/sql.Scan()` returns an error that propagates as HTTP 500.
+
+### The Fix
+Six columns must be non-null for GoTrue to scan a user row:
+`confirmation_token`, `recovery_token`, `email_change_token_new`, `email_change`, `phone_change_token`, `phone_change`
+
+**Repair file**: `AUTH_FIX_CONFIRMATION_TOKEN.sql`
+**Diagnostic file**: `AUTH_500_DIAGNOSTIC.sql`
+**Diff file**: `AUTH_COLUMN_DIFF.sql`
+
+### Prevention
+All future `INSERT INTO auth.users` statements MUST populate these six columns. See updated `PHASE_10_AUTH_USERS.sql` for the corrected INSERT template.
+

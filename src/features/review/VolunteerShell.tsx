@@ -26,6 +26,7 @@ function stageLabel(state: string): string {
     implementation_approved: "Impl approved",
     prediction_review_claimed: "Pred review claimed",
     awaiting_prediction_review: "Awaiting pred review",
+    prediction_revision: "Revising prediction",
     prediction_approved: "Pred approved",
     testing_in_scratch: "Testing",
     reflection_pending: "Reflection",
@@ -175,6 +176,7 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   const userId = user?.id ?? "";
 
   const [view, setView] = useState("queue");
+  const [claimedHelpIds, setClaimedHelpIds] = useState<string[]>([]);
 
   // Live data hooks
   const { data: enrichedReviews, isLoading: reviewsLoading, error: reviewsError } = useReviewQueue();
@@ -189,9 +191,12 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   // Derive queue items from enriched data
   const allQueue: QueueItem[] = [
     ...(enrichedReviews ?? []).map(reviewToItem).filter(q => q.status === "pending"),
-    ...(enrichedHelp ?? []).map(helpToItem),
+    ...(enrichedHelp ?? []).map(helpToItem).filter(q => !claimedHelpIds.includes(q.id)),
   ];
-  const claimedItems: QueueItem[] = (enrichedClaimed ?? []).map(reviewToItem);
+  const claimedItems: QueueItem[] = [
+    ...(enrichedClaimed ?? []).map(reviewToItem),
+    ...(enrichedHelp ?? []).map(helpToItem).filter(q => claimedHelpIds.includes(q.id)),
+  ];
 
   const pendingReviews = allQueue.filter(q => q.type !== "Help");
   const helpQueue = allQueue.filter(q => q.type === "Help");
@@ -206,9 +211,8 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   const handleClaim = (item: QueueItem) => {
     if (!userId) return;
     if (item.type === "Help") {
-      // Help requests aren't claimed via the review claim flow; we resolve them directly
-      // But conceptually a volunteer "claims" a help by resolving it
-      resolveHelp.mutate({ flagId: item._helpId!, userId });
+      // Track locally as claimed so it moves to the Claimed tab
+      setClaimedHelpIds(prev => [...prev, item.id]);
     } else {
       claimReview.mutate({ reviewId: item._reviewId!, userId });
     }
@@ -217,7 +221,12 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   const handleResolve = (item: QueueItem, outcome: string) => {
     if (!userId) return;
     if (item.type === "Help") {
-      resolveHelp.mutate({ flagId: item._helpId!, userId });
+      resolveHelp.mutate({ flagId: item._helpId!, userId }, {
+        onSuccess: () => {
+          // Remove from local claimed list after resolving
+          setClaimedHelpIds(prev => prev.filter(id => id !== item.id));
+        },
+      });
     } else {
       resolveReview.mutate({ reviewId: item._reviewId!, userId, outcome });
     }

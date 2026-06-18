@@ -25,6 +25,7 @@ const DB_STATE_TO_STAGE: Record<string, StageKey> = {
   prediction_review_claimed: "prediction_review_claimed",
   awaiting_prediction_review: "prediction_review_requested",
   prediction_approved: "prediction_approved",
+  prediction_revision: "prediction_submitted",
   testing_in_scratch: "testing",
   reflection_pending: "reflection",
   completed: "complete",
@@ -59,7 +60,7 @@ function nextAction(dbState: string): NextAction {
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function StudentHome({ caseStage, onOpenCase, onGoToCases }: {
+export function StudentHome({ caseStage: _caseStage, onOpenCase, onGoToCases }: {
   caseStage: StageKey; onOpenCase: () => void; onGoToCases: () => void;
 }) {
   const { user } = useAuth();
@@ -88,7 +89,7 @@ export function StudentHome({ caseStage, onOpenCase, onGoToCases }: {
   }));
 
   // Derived stats
-  const displayName = profile?.display_name ?? user?.user_metadata?.display_name ?? "Student";
+  const displayName = (profile as any)?.display_name ?? user?.user_metadata?.display_name ?? "Student";
   const clearanceLevel = profile?.clearance_level ?? 1;
   const reputation = profile?.reputation_points ?? 0;
   const predictionAccuracy = Math.round(profile?.prediction_accuracy ?? 0);
@@ -121,7 +122,7 @@ export function StudentHome({ caseStage, onOpenCase, onGoToCases }: {
                 width: 36, height: 36, borderRadius: "50%", background: "var(--brand)",
                 color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
                 fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: "0.85rem",
-              }}>{displayName.split(" ").map(n => n[0]).join("").toUpperCase()}</div>
+              }}>{displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase()}</div>
             </div>
           }
         />
@@ -147,7 +148,7 @@ export function StudentHome({ caseStage, onOpenCase, onGoToCases }: {
               width: 36, height: 36, borderRadius: "50%", background: "var(--brand)",
               color: "#fff", display: "flex", alignItems: "center", justifyContent: "center",
               fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: "0.85rem",
-            }}>{displayName.split(" ").map(n => n[0]).join("").toUpperCase()}</div>
+            }}>{displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase()}</div>
           </div>
         }
       />

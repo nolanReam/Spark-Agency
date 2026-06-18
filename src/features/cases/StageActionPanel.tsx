@@ -19,6 +19,7 @@ interface Props {
   setLaneAttempts: (a: string[]) => void;
   screenshot: string | null;
   setScreenshot: (s: string | null) => void;
+  readOnly?: boolean;
 }
 
 function WaitingCard({ label, body, sim }: { label: string; body: string; sim: ReactNode }) {
@@ -49,7 +50,7 @@ function InProgressCard({ label, body, sim }: { label: string; body: string; sim
   );
 }
 
-export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, laneAttempts, setLaneAttempts, screenshot, setScreenshot }: Props) {
+export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
   switch (stage) {
     case "building":
       return (
@@ -91,7 +92,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
               </div>
             )}
           </div>
-          <Btn variant="accent" icon={Send} onClick={() => setStage("impl_review_requested")}>Request Implementation Review</Btn>
+          <Btn variant="accent" icon={Send} disabled={readOnly} onClick={() => setStage("impl_review_requested")}>{readOnly ? "Read-only" : "Request Implementation Review"}</Btn>
         </Card>
       );
 
@@ -139,14 +140,14 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
           </div>
           <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 1rem" }}>{caseData.predictPrompt}</p>
           <Field label="I think...">
-            <Textarea rows={2} value={prediction.think} placeholder="...the result will be..." onChange={e => setPrediction({ ...prediction, think: e.target.value })} />
+            <Textarea rows={2} value={prediction.think} placeholder="...the result will be..." readOnly={readOnly} onChange={e => setPrediction({ ...prediction, think: e.target.value })} />
           </Field>
           <Field label="Because...">
-            <Textarea rows={3} value={prediction.because} placeholder="...I traced through the code and..." onChange={e => setPrediction({ ...prediction, because: e.target.value })} />
+            <Textarea rows={3} value={prediction.because} placeholder="...I traced through the code and..." readOnly={readOnly} onChange={e => setPrediction({ ...prediction, because: e.target.value })} />
           </Field>
           <div style={{ marginTop: "0.85rem" }}>
-            <Btn variant="accent" icon={Send} disabled={!prediction.think.trim() || !prediction.because.trim()} onClick={() => setStage("prediction_review_requested")}>Submit prediction</Btn>
-            <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: "0.45rem" }}>Once submitted, your prediction is locked — you can't edit it.</div>
+            <Btn variant="accent" icon={Send} disabled={readOnly || !prediction.think.trim() || !prediction.because.trim()} onClick={() => setStage("prediction_review_requested")}>{readOnly ? "View prediction log" : "Submit prediction"}</Btn>
+            {!readOnly && <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginTop: "0.45rem" }}>Once submitted, your prediction is locked — you can't edit it.</div>}
           </div>
         </Card>
       );
@@ -217,8 +218,8 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
         <Card style={{ padding: "1.25rem" }}>
           <SectionLabel icon={Lightbulb}>Reflection</SectionLabel>
           <p style={{ fontSize: "0.83rem", color: "var(--text-muted)", margin: "0.5rem 0 0.75rem", lineHeight: 1.6 }}>{caseData.reflectionPrompt}</p>
-          <Textarea rows={4} placeholder="My prediction was... what actually happened was..." />
-          <div style={{ marginTop: "0.75rem" }}><Btn variant="primary" onClick={() => setStage("complete")}>Submit reflection & complete case</Btn></div>
+          <Textarea rows={4} placeholder="My prediction was... what actually happened was..." readOnly={readOnly} />
+          <div style={{ marginTop: "0.75rem" }}><Btn variant="primary" disabled={readOnly} onClick={() => setStage("complete")}>{readOnly ? "View reflection log" : "Submit reflection & complete case"}</Btn></div>
         </Card>
       );
 

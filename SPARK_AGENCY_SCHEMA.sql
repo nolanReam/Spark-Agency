@@ -417,6 +417,9 @@ CREATE POLICY "cases_insert_instructor" ON cases FOR INSERT
 DROP POLICY IF EXISTS "cases_update_instructor" ON cases;
 CREATE POLICY "cases_update_instructor" ON cases FOR UPDATE
   USING (is_instructor()) WITH CHECK (is_instructor());
+DROP POLICY IF EXISTS "cases_delete_instructor" ON cases;
+CREATE POLICY "cases_delete_instructor" ON cases FOR DELETE
+  USING (is_instructor());
 
 -- case_lanes
 DROP POLICY IF EXISTS "lanes_read_auth" ON case_lanes;
@@ -610,7 +613,13 @@ INSERT INTO student_profiles (user_id, grade, age, interests, clearance_level, r
   ('00000000-0000-0000-0000-000000001004', 4, 9, ARRAY['games'], 3, 70, 70.0),
   ('00000000-0000-0000-0000-000000001005', 3, 8, ARRAY['legos'], 2, 40, 55.0),
   ('00000000-0000-0000-0000-000000001006', 5, 10, ARRAY['art', 'music'], 3, 95, 78.0)
-ON CONFLICT (user_id) DO NOTHING;
+ON CONFLICT (user_id) DO UPDATE SET
+  clearance_level = EXCLUDED.clearance_level,
+  reputation_points = EXCLUDED.reputation_points,
+  prediction_accuracy = EXCLUDED.prediction_accuracy,
+  grade = EXCLUDED.grade,
+  age = EXCLUDED.age,
+  interests = EXCLUDED.interests;
 
 -- Cases
 INSERT INTO cases (id, org_id, case_code, title, client_brief, mission, tools_allowed, concept_tags, min_clearance, status, predict_prove_prompt, reflection_prompt, transfer_hint, reputation_reward, estimated_minutes, created_by, published_at) VALUES

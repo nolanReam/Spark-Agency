@@ -61,6 +61,14 @@ export function useUpdateCase() {
   });
 }
 
+export function useDeleteCase() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (caseId: string) => api.deleteCase(caseId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["cases"] }),
+  });
+}
+
 // ─── Sessions ────────────────────────────────────────────
 
 export function useSessions() {
@@ -82,8 +90,8 @@ export function useActiveSession() {
 export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ sessionCode, caseIds, instructorId }: { sessionCode: string; caseIds: string[]; instructorId?: string }) =>
-      api.createSession(sessionCode, caseIds, instructorId),
+    mutationFn: ({ sessionCode, caseIds, instructorId, status }: { sessionCode: string; caseIds: string[]; instructorId?: string; status?: string }) =>
+      api.createSession(sessionCode, caseIds, instructorId, status),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
   });
 }
@@ -121,6 +129,17 @@ export function useJoinSession() {
 }
 
 // ─── Case Progress ───────────────────────────────────────
+
+export function useCreateCaseProgress() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ studentId, caseId, sessionId }: { studentId: string; caseId: string; sessionId: string }) =>
+      api.createCaseProgress(studentId, caseId, sessionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["student-progress"] });
+    },
+  });
+}
 
 export function useStudentProgress(studentId: string, sessionId?: string) {
   return useQuery({
