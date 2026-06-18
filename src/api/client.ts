@@ -252,20 +252,19 @@ async function ensurePendingReview(
   return data;
 }
 
-async function getLatestPredictionId(progressId: string) {
+async function getNextPredictionAttemptNumber(progressId: string) {
   const { data, error } = await supabase
     .from("predictions")
-    .select("id")
+    .select("attempt_number")
     .eq("case_progress_id", progressId)
-    .order("committed_at", { ascending: false })
-    .limit(1)
-    .single();
+    .order("attempt_number", { ascending: false })
+    .limit(1);
 
   if (error) throw error;
-  return data.id as string;
+  return ((data?.[0]?.attempt_number as number | undefined) ?? 0) + 1;
 }
 
-export async function advanceStage(progressId: string, newState: string) {
+export async function advanceStage(progressId: string, newState: string, predictionId?: string) {
   const { data, error } = await supabase
     .from("case_progress")
     .update({ state: newState, updated_at: new Date().toISOString() })
@@ -279,7 +278,6 @@ export async function advanceStage(progressId: string, newState: string) {
   }
 
   if (newState === "awaiting_prediction_review") {
-    const predictionId = await getLatestPredictionId(progressId);
     await ensurePendingReview(progressId, "prediction", predictionId);
   }
 
@@ -304,11 +302,12 @@ export async function createCaseProgress(studentId: string, caseId: string, sess
 // ─── Predictions ─────────────────────────────────────────
 
 export async function submitPrediction(progressId: string, predictionText: string, reasoningText: string) {
+  const attemptNumber = await getNextPredictionAttemptNumber(progressId);
   const { data, error } = await supabase
     .from("predictions")
     .insert({
       case_progress_id: progressId,
-      attempt_number: 1,
+      attempt_number: attemptNumber,
       prediction_text: predictionText,
       reasoning_text: reasoningText,
       status: "pending",

@@ -152,8 +152,8 @@ export function useStudentProgress(studentId: string, sessionId?: string) {
 export function useAdvanceStage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ progressId, newState }: { progressId: string; newState: string }) =>
-      api.advanceStage(progressId, newState),
+    mutationFn: ({ progressId, newState, predictionId }: { progressId: string; newState: string; predictionId?: string }) =>
+      api.advanceStage(progressId, newState, predictionId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["student-progress"] });
       qc.invalidateQueries({ queryKey: ["review-queue-enriched"] });

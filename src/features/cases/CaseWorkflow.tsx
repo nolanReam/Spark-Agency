@@ -131,7 +131,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
         prediction: prediction.think,
         reasoning: prediction.because,
       }, {
-        onSuccess: () => advanceStage.mutate({ progressId, newState: targetDbState }, {
+        onSuccess: (submittedPrediction) => advanceStage.mutate({ progressId, newState: targetDbState, predictionId: submittedPrediction.id }, {
           onError: () => setOptimisticDbState(null),
         }),
         onError: () => setOptimisticDbState(null),
