@@ -318,6 +318,29 @@ export async function submitPrediction(progressId: string, predictionText: strin
   return data as DbPrediction;
 }
 
+export async function getLatestApprovedPrediction(progressId: string) {
+  const { data, error } = await supabase
+    .from("reviews")
+    .select(`
+      reviewed_at,
+      predictions!reviews_prediction_id_fkey(
+        id, case_progress_id, attempt_number, prediction_text, reasoning_text, committed_at, status
+      )
+    `)
+    .eq("case_progress_id", progressId)
+    .eq("review_type", "prediction")
+    .eq("outcome", "approved")
+    .not("reviewed_at", "is", null)
+    .not("prediction_id", "is", null)
+    .order("reviewed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  const prediction = data?.predictions as DbPrediction | null | undefined;
+  return prediction ?? null;
+}
+
 // ─── Reviews ─────────────────────────────────────────────
 
 /** Rich review queue item with joined student/case/prediction data */

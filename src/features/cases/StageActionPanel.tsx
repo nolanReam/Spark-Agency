@@ -15,6 +15,7 @@ interface Props {
   caseData: CaseData;
   prediction: { think: string; because: string };
   setPrediction: (p: { think: string; because: string }) => void;
+  displayPrediction?: { think: string; because: string };
   laneAttempts: string[];
   setLaneAttempts: (a: string[]) => void;
   screenshot: string | null;
@@ -50,7 +51,9 @@ function InProgressCard({ label, body, sim }: { label: string; body: string; sim
   );
 }
 
-export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
+export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, displayPrediction, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
+  const predictionForDisplay = displayPrediction ?? prediction;
+
   switch (stage) {
     case "building":
       return (
@@ -195,7 +198,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--success)" }}>Prediction approved</span>
           </div>
           <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 0.75rem" }}>Great reasoning. You're cleared to test — go run your Scratch project.</p>
-          <div style={{ marginBottom: "0.85rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Your prediction</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.think}</div></div>
+          <div style={{ marginBottom: "0.85rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Your prediction</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{predictionForDisplay.think}</div></div>
           <Btn variant="primary" onClick={() => setStage("testing")}>Go test in Scratch</Btn>
         </Card>
       );
@@ -208,7 +211,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", color: "var(--success)" }}>Testing</span>
           </div>
           <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 0.75rem" }}>Run your Scratch project and compare what actually happens to your prediction.</p>
-          <div style={{ marginBottom: "0.85rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Your prediction</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.think}</div></div>
+          <div style={{ marginBottom: "0.85rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Your prediction</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{predictionForDisplay.think}</div></div>
           <Btn variant="primary" onClick={() => setStage("reflection")}>I tested it — continue</Btn>
         </Card>
       );

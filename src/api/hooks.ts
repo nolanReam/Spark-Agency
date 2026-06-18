@@ -174,6 +174,14 @@ export function useSubmitPrediction() {
   });
 }
 
+export function useLatestApprovedPrediction(progressId: string, enabled = true) {
+  return useQuery({
+    queryKey: ["latest-approved-prediction", progressId],
+    queryFn: () => api.getLatestApprovedPrediction(progressId),
+    enabled: !!progressId && enabled,
+  });
+}
+
 // ─── Reviews ─────────────────────────────────────────────
 
 /** Enriched review queue with student names, case titles, prediction data */

@@ -14,6 +14,7 @@ import {
   useActiveSession,
   useAdvanceStage,
   useSubmitPrediction,
+  useLatestApprovedPrediction,
 } from "../../api/hooks";
 
 // ─── DB state ↔ StageKey mappings ─────────────────────────────────
@@ -108,6 +109,11 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
     ? "prediction_submitted"
     : dbStage;
   const showTransferHint = stage === "reflection" || stage === "complete";
+  const displayNeedsApprovedPrediction = stage === "prediction_approved" || stage === "testing";
+  const { data: approvedPrediction } = useLatestApprovedPrediction(activeProgress?.id ?? "", displayNeedsApprovedPrediction);
+  const predictionForDisplay = approvedPrediction
+    ? { think: approvedPrediction.prediction_text, because: approvedPrediction.reasoning_text }
+    : prediction;
 
   // setStage wrapper: also call the mutation when appropriate
   const handleSetStage = (newStage: StageKey) => {
@@ -228,6 +234,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
             <StageActionPanel
               stage={stage} setStage={handleSetStage} caseData={caseData}
               prediction={prediction} setPrediction={setPrediction}
+              displayPrediction={predictionForDisplay}
               laneAttempts={laneAttempts} setLaneAttempts={setLaneAttempts}
               screenshot={screenshot} setScreenshot={setScreenshot}
               readOnly={readOnly}
