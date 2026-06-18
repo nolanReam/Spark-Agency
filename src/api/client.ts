@@ -216,6 +216,55 @@ export async function getStudentProgress(studentId: string, sessionId?: string) 
   return data as DbCaseProgress[];
 }
 
+async function ensurePendingReview(
+  progressId: string,
+  reviewType: "implementation" | "prediction",
+  predictionId?: string
+) {
+  const { data: existing, error: existingError } = await supabase
+    .from("reviews")
+    .select("id")
+    .eq("case_progress_id", progressId)
+    .eq("review_type", reviewType)
+    .is("reviewed_at", null)
+    .limit(1);
+
+  if (existingError) throw existingError;
+  if (existing && existing.length > 0) return existing[0];
+
+  if (reviewType === "prediction" && !predictionId) {
+    throw new Error("Prediction review requires a prediction");
+  }
+
+  const review = {
+    case_progress_id: progressId,
+    review_type: reviewType,
+    ...(predictionId ? { prediction_id: predictionId } : {}),
+  };
+
+  const { data, error } = await supabase
+    .from("reviews")
+    .insert(review)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function getLatestPredictionId(progressId: string) {
+  const { data, error } = await supabase
+    .from("predictions")
+    .select("id")
+    .eq("case_progress_id", progressId)
+    .order("committed_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (error) throw error;
+  return data.id as string;
+}
+
 export async function advanceStage(progressId: string, newState: string) {
   const { data, error } = await supabase
     .from("case_progress")
@@ -224,6 +273,16 @@ export async function advanceStage(progressId: string, newState: string) {
     .select()
     .single();
   if (error) throw error;
+
+  if (newState === "awaiting_implementation_review") {
+    await ensurePendingReview(progressId, "implementation");
+  }
+
+  if (newState === "awaiting_prediction_review") {
+    const predictionId = await getLatestPredictionId(progressId);
+    await ensurePendingReview(progressId, "prediction", predictionId);
+  }
+
   return data as DbCaseProgress;
 }
 

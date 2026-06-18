@@ -156,7 +156,7 @@ export function useAdvanceStage() {
       api.advanceStage(progressId, newState),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["student-progress"] });
-      qc.invalidateQueries({ queryKey: ["review-queue"] });
+      qc.invalidateQueries({ queryKey: ["review-queue-enriched"] });
       qc.invalidateQueries({ queryKey: ["queue-health"] });
     },
   });
