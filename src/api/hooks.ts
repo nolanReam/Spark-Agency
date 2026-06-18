@@ -202,6 +202,8 @@ export function useClaimReview() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["review-queue-enriched"] });
       qc.invalidateQueries({ queryKey: ["claimed-reviews-enriched"] });
+      qc.invalidateQueries({ queryKey: ["student-progress"] });
+      qc.invalidateQueries({ queryKey: ["queue-health"] });
     },
   });
 }
@@ -216,6 +218,7 @@ export function useResolveReview() {
       qc.invalidateQueries({ queryKey: ["review-queue-enriched"] });
       qc.invalidateQueries({ queryKey: ["claimed-reviews-enriched"] });
       qc.invalidateQueries({ queryKey: ["student-progress"] });
+      qc.invalidateQueries({ queryKey: ["queue-health"] });
     },
   });
 }

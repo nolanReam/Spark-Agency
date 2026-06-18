@@ -486,15 +486,44 @@ export async function getReviewQueue(_userId: string, reviewType?: string) {
   return data;
 }
 
+function claimedProgressState(reviewType: string) {
+  return reviewType === "implementation"
+    ? "implementation_review_claimed"
+    : "prediction_review_claimed";
+}
+
+function resolvedProgressState(reviewType: string, outcome: string) {
+  if (reviewType === "implementation") {
+    return outcome === "approved" ? "implementation_approved" : "building";
+  }
+
+  return outcome === "approved" ? "prediction_approved" : "implementation_approved";
+}
+
+async function updateProgressState(progressId: string, state: string) {
+  const { error } = await supabase
+    .from("case_progress")
+    .update({ state, updated_at: new Date().toISOString() })
+    .eq("id", progressId);
+
+  if (error) throw error;
+}
+
 export async function claimReview(reviewId: string, userId: string) {
   const { data, error } = await supabase
     .from("reviews")
     .update({ claimed_by: userId, claimed_at: new Date().toISOString() })
     .is("claimed_by", null) // first-write-wins
     .eq("id", reviewId)
-    .select()
+    .select("*, case_progress_id, review_type")
     .single();
   if (error) throw error;
+
+  await updateProgressState(
+    data.case_progress_id,
+    claimedProgressState(data.review_type)
+  );
+
   return data;
 }
 
@@ -508,9 +537,15 @@ export async function resolveReview(reviewId: string, userId: string, outcome: s
       note: note || null,
     })
     .eq("id", reviewId)
-    .select()
+    .select("*, case_progress_id, review_type")
     .single();
   if (error) throw error;
+
+  await updateProgressState(
+    data.case_progress_id,
+    resolvedProgressState(data.review_type, outcome)
+  );
+
   return data;
 }
 
