@@ -15,6 +15,7 @@ import {
   useAdvanceStage,
   useSubmitPrediction,
   useLatestApprovedPrediction,
+  useSaveReflection,
 } from "../../api/hooks";
 
 // ─── DB state ↔ StageKey mappings ─────────────────────────────────
@@ -54,6 +55,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
   const userId = user?.id ?? "";
 
   const [prediction, setPrediction] = useState({ think: "", because: "" });
+  const [reflectionText, setReflectionText] = useState("");
   const [laneAttempts, setLaneAttempts] = useState<string[]>([]);
   const [screenshot, setScreenshot] = useState<string | null>(null);
   const [showPredictionForm, setShowPredictionForm] = useState(false);
@@ -84,6 +86,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
   // Mutations
   const advanceStage = useAdvanceStage();
   const submitPrediction = useSubmitPrediction();
+  const saveReflection = useSaveReflection();
 
   // ── Optimistic stage: use local override if set, otherwise DB data ──
   // When optimisticDbState is set (user just clicked a button), use it.
@@ -127,6 +130,20 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
 
     const progressId = activeProgress?.id;
     if (!progressId) return;
+
+    if (newStage === "complete") {
+      const targetDbState = "completed";
+      saveReflection.mutate({ progressId, reflectionText }, {
+        onSuccess: () => {
+          setOptimisticDbState(targetDbState);
+          advanceStage.mutate({ progressId, newState: targetDbState }, {
+            onError: () => setOptimisticDbState(null),
+          });
+          _externalSetStage(newStage);
+        },
+      });
+      return;
+    }
 
     // For prediction_submitted → prediction_review_requested, submit the prediction first
     if (newStage === "prediction_review_requested" && prediction.think && prediction.because) {
@@ -235,6 +252,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
               stage={stage} setStage={handleSetStage} caseData={caseData}
               prediction={prediction} setPrediction={setPrediction}
               displayPrediction={predictionForDisplay}
+              reflectionText={reflectionText} setReflectionText={setReflectionText}
               laneAttempts={laneAttempts} setLaneAttempts={setLaneAttempts}
               screenshot={screenshot} setScreenshot={setScreenshot}
               readOnly={readOnly}

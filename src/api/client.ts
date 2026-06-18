@@ -60,6 +60,10 @@ export interface DbReview {
   outcome: string | null; note: string | null;
 }
 
+export interface DbReflection {
+  case_progress_id: string; predicted_vs_actual: string; submitted_at: string;
+}
+
 export interface DbInterventionFlag {
   id: string; student_id: string; case_id: string;
   reason: string; raised_at: string;
@@ -322,6 +326,21 @@ export async function createCaseProgress(studentId: string, caseId: string, sess
     .single();
   if (error) throw error;
   return data as DbCaseProgress;
+}
+
+export async function saveReflection(progressId: string, predictedVsActual: string) {
+  const { data, error } = await supabase
+    .from("reflections")
+    .upsert({
+      case_progress_id: progressId,
+      predicted_vs_actual: predictedVsActual,
+      submitted_at: new Date().toISOString(),
+    }, { onConflict: "case_progress_id" })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as DbReflection;
 }
 
 // ─── Predictions ─────────────────────────────────────────

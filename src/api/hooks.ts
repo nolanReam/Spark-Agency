@@ -162,6 +162,17 @@ export function useAdvanceStage() {
   });
 }
 
+export function useSaveReflection() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ progressId, reflectionText }: { progressId: string; reflectionText: string }) =>
+      api.saveReflection(progressId, reflectionText),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["student-progress"] });
+    },
+  });
+}
+
 // ─── Predictions ─────────────────────────────────────────
 
 export function useSubmitPrediction() {

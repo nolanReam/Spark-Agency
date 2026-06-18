@@ -16,6 +16,8 @@ interface Props {
   prediction: { think: string; because: string };
   setPrediction: (p: { think: string; because: string }) => void;
   displayPrediction?: { think: string; because: string };
+  reflectionText: string;
+  setReflectionText: (text: string) => void;
   laneAttempts: string[];
   setLaneAttempts: (a: string[]) => void;
   screenshot: string | null;
@@ -51,7 +53,7 @@ function InProgressCard({ label, body, sim }: { label: string; body: string; sim
   );
 }
 
-export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, displayPrediction, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
+export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, displayPrediction, reflectionText, setReflectionText, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
   const predictionForDisplay = displayPrediction ?? prediction;
 
   switch (stage) {
@@ -221,7 +223,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
         <Card style={{ padding: "1.25rem" }}>
           <SectionLabel icon={Lightbulb}>Reflection</SectionLabel>
           <p style={{ fontSize: "0.83rem", color: "var(--text-muted)", margin: "0.5rem 0 0.75rem", lineHeight: 1.6 }}>{caseData.reflectionPrompt}</p>
-          <Textarea rows={4} placeholder="My prediction was... what actually happened was..." readOnly={readOnly} />
+          <Textarea rows={4} value={reflectionText} placeholder="My prediction was... what actually happened was..." readOnly={readOnly} onChange={e => setReflectionText(e.target.value)} />
           <div style={{ marginTop: "0.75rem" }}><Btn variant="primary" disabled={readOnly} onClick={() => setStage("complete")}>{readOnly ? "View reflection log" : "Submit reflection & complete case"}</Btn></div>
         </Card>
       );
