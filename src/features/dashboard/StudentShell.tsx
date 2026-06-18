@@ -12,6 +12,18 @@ import { CaseWorkflow } from "../cases/CaseWorkflow";
 import type { StageKey } from "../../lib/constants";
 import { CLEARANCE_LEVELS } from "../../lib/constants";
 
+const ACTIVE_PROGRESS_STATES = new Set([
+  "building",
+  "awaiting_implementation_review",
+  "implementation_review_claimed",
+  "implementation_approved",
+  "awaiting_prediction_review",
+  "prediction_review_claimed",
+  "prediction_approved",
+  "testing_in_scratch",
+  "reflection_pending",
+]);
+
 export function StudentShell({ role, theme, setTheme, onSignOut }: {
   role: UserRole; theme: "light" | "dark"; setTheme: (t: "light" | "dark") => void; onSignOut?: () => void;
 }) {
@@ -40,7 +52,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const sessionStatus = activeSession?.status ?? "unknown";
 
   // Derive active case from progress for Raise Hand
-  const activeProgress = (progress ?? []).find(p => p.state !== "completed" && p.state !== "not_started");
+  const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
   const activeCaseId = activeProgress?.case_id ?? "";
 
   const handleRaiseHand = () => {
@@ -67,6 +79,10 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
     setStartError(null);
     if (!activeSession?.id) {
       setStartError("No active session — join a session first.");
+      return;
+    }
+    if (activeProgress) {
+      setStartError("Finish your active case before starting another.");
       return;
     }
     setReadOnly(false);

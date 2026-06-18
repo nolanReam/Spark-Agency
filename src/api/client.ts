@@ -284,7 +284,32 @@ export async function advanceStage(progressId: string, newState: string, predict
   return data as DbCaseProgress;
 }
 
+const ACTIVE_PROGRESS_STATES = [
+  "building",
+  "awaiting_implementation_review",
+  "implementation_review_claimed",
+  "implementation_approved",
+  "awaiting_prediction_review",
+  "prediction_review_claimed",
+  "prediction_approved",
+  "testing_in_scratch",
+  "reflection_pending",
+];
+
 export async function createCaseProgress(studentId: string, caseId: string, sessionId: string) {
+  const { data: existingActive, error: activeError } = await supabase
+    .from("case_progress")
+    .select("id")
+    .eq("student_id", studentId)
+    .eq("session_id", sessionId)
+    .in("state", ACTIVE_PROGRESS_STATES)
+    .limit(1);
+
+  if (activeError) throw activeError;
+  if (existingActive && existingActive.length > 0) {
+    throw new Error("Finish your active case before starting another.");
+  }
+
   const { data, error } = await supabase
     .from("case_progress")
     .insert({

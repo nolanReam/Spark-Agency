@@ -12,6 +12,18 @@ import {
 } from "../../api/hooks";
 // DbCase import removed
 
+const ACTIVE_PROGRESS_STATES = new Set([
+  "building",
+  "awaiting_implementation_review",
+  "implementation_review_claimed",
+  "implementation_approved",
+  "awaiting_prediction_review",
+  "prediction_review_claimed",
+  "prediction_approved",
+  "testing_in_scratch",
+  "reflection_pending",
+]);
+
 // ─── Component ──────────────────────────────────────────────────────
 
 export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
@@ -34,14 +46,14 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
   const clearanceLevel = profile?.clearance_level ?? 1;
 
   // Derive active case from progress
-  const activeProgress = (progress ?? []).find(p => p.state !== "completed" && p.state !== "not_started");
+  const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
   const activeCaseId = activeProgress?.case_id ?? "";
   const { data: activeCase } = useCaseById(activeCaseId);
 
   // Completed case IDs with metadata
   const completedProgress = (progress ?? []).filter(p => p.state === "completed");
   const completedCaseIds = new Set(completedProgress.map(p => p.case_id));
-  const activeCaseIds = new Set((progress ?? []).filter(p => p.state !== "completed").map(p => p.case_id));
+  const activeCaseIds = new Set((progress ?? []).filter(p => ACTIVE_PROGRESS_STATES.has(p.state)).map(p => p.case_id));
 
   // Available = published minus anything in progress
   const availableCases = (publishedCases ?? []).filter(c => !activeCaseIds.has(c.id) && !completedCaseIds.has(c.id));
@@ -89,7 +101,7 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
             Available cases
           </h2>
           <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", margin: "0 0 0.75rem" }}>
-            {activeCase ? "Finish your active case to start a new one." : "Pick a case to get started."}
+            {activeCase ? "Finish your active case before starting another." : "Pick a case to get started."}
           </p>
           {availableCases.length === 0 ? (
             <Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)", marginBottom: "1.5rem" }}>
@@ -99,9 +111,10 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.85rem", marginBottom: "1.5rem" }}>
               {availableCases.map(c => {
                 const locked = clearanceLevel < (c.min_clearance ?? 1);
+                const blockedByActiveCase = !!activeCase && !locked;
                 return (
-                  <Card key={c.id} style={{ padding: "1.1rem", opacity: locked ? 0.55 : 1, position: "relative", cursor: locked ? "default" : "pointer" }}
-                    onClick={() => { if (!locked) onStartCase(c.id); }}>
+                  <Card key={c.id} style={{ padding: "1.1rem", opacity: locked || blockedByActiveCase ? 0.55 : 1, position: "relative", cursor: locked || blockedByActiveCase ? "default" : "pointer" }}
+                    onClick={() => { if (!locked && !blockedByActiveCase) onStartCase(c.id); }}>
                     {locked && <div style={{ position: "absolute", top: "0.75rem", right: "0.75rem" }}><Lock size={14} color="var(--text-muted)" /></div>}
                     <div style={{ display: "flex", gap: "0.35rem", marginBottom: "0.5rem", flexWrap: "wrap" }}>
                       {(c.concept_tags ?? []).map((concept: string) => <Badge key={concept}>{concept}</Badge>)}
@@ -113,6 +126,7 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
                       <Badge tone="accent">+{c.reputation_reward} rep</Badge>
                       <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>~{c.estimated_minutes} min</span>
                     </div>
+                    {blockedByActiveCase && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.55rem" }}>Finish your active case before starting another.</div>}
                   </Card>
                 );
               })}
