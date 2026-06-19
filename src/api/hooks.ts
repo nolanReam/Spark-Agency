@@ -146,6 +146,7 @@ export function useStudentProgress(studentId: string, sessionId?: string) {
     queryKey: ["student-progress", studentId, sessionId],
     queryFn: () => api.getStudentProgress(studentId, sessionId),
     enabled: !!studentId,
+    refetchInterval: studentId ? 4_000 : false,
   });
 }
 
