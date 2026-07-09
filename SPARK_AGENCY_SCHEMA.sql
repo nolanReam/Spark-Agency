@@ -356,6 +356,24 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.resolve_own_raise_hand(p_case_id UUID)
+RETURNS intervention_flags AS $$
+DECLARE
+  resolved_flag intervention_flags;
+BEGIN
+  UPDATE public.intervention_flags
+  SET resolved_at = now(),
+      resolved_by = auth.uid()
+  WHERE student_id = auth.uid()
+    AND case_id = p_case_id
+    AND reason = 'student_raise_hand'
+    AND resolved_at IS NULL
+  RETURNING * INTO resolved_flag;
+
+  RETURN resolved_flag;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
 -- ============================================================
 -- PHASE 6: ENABLE RLS ON ALL TABLES
 -- ============================================================
@@ -573,6 +591,7 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_instructor() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand(UUID) TO authenticated;
 
 -- ============================================================
 -- PHASE 9: SEED DATA

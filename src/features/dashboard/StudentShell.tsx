@@ -4,7 +4,7 @@ import { Sidebar } from "../../components/layout";
 import { Card, Btn } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
-import { useStudentProfile, useActiveSession, useRaiseHand, useStudentProgress, useCreateCaseProgress } from "../../api/hooks";
+import { useStudentProfile, useActiveSession, useRaiseHand, useActiveRaiseHand, useLowerHand, useStudentProgress, useCreateCaseProgress } from "../../api/hooks";
 import { StudentHome } from "./StudentHome";
 import { StudentCases } from "../cases/StudentCases";
 import { StudentProgress } from "../cases/StudentProgress";
@@ -32,7 +32,6 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   const [view, setView] = useState("home");
   const [caseStage, setCaseStage] = useState<StageKey>("impl_review_requested");
-  const [handRaised, setHandRaised] = useState(false);
   const [handError, setHandError] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
   // For viewing a specific case (read-only or starting new)
@@ -44,6 +43,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const { data: activeSession } = useActiveSession();
   const { data: progress } = useStudentProgress(userId, activeSession?.id);
   const raiseHand = useRaiseHand();
+  const lowerHand = useLowerHand();
   const createCaseProgress = useCreateCaseProgress();
 
   const clearanceLevel = profile?.clearance_level ?? 1;
@@ -54,23 +54,34 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   // Derive active case from progress for Raise Hand
   const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
   const activeCaseId = activeProgress?.case_id ?? "";
+  const { data: activeRaiseHand } = useActiveRaiseHand(userId, activeCaseId);
+  const handRaised = !!activeRaiseHand;
+  const handPending = raiseHand.isPending || lowerHand.isPending;
 
   const handleRaiseHand = () => {
     setHandError(false);
-    if (handRaised) {
-      setHandRaised(false);
-      return;
-    }
     if (!activeCaseId) {
       setHandError(true);
       setTimeout(() => setHandError(false), 2000);
       return;
     }
-    setHandRaised(true);
+
+    if (handRaised) {
+      lowerHand.mutate({ caseId: activeCaseId }, {
+        onError: (err: Error) => {
+          console.error("Lower hand failed:", err.message);
+          setHandError(true);
+          setTimeout(() => setHandError(false), 1200);
+        },
+      });
+      return;
+    }
+
     raiseHand.mutate({ studentId: userId, caseId: activeCaseId }, {
       onError: (err: Error) => {
         console.error("Raise hand failed:", err.message);
-        setTimeout(() => setHandRaised(false), 1200);
+        setHandError(true);
+        setTimeout(() => setHandError(false), 1200);
       },
     });
   };
@@ -136,6 +147,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
         <Btn
           variant={handRaised ? "success" : "accent"}
           size="md"
+          disabled={handPending}
           onClick={handleRaiseHand}
           style={{ width: "100%" }}
         >

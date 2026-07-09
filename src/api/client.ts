@@ -628,6 +628,18 @@ export async function getClaimedReviews(userId: string) {
 // ─── Help Requests / Intervention ────────────────────────
 
 export async function raiseHand(studentId: string, caseId: string) {
+  const { data: existing, error: existingError } = await supabase
+    .from("intervention_flags")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("case_id", caseId)
+    .eq("reason", "student_raise_hand")
+    .is("resolved_at", null)
+    .limit(1);
+
+  if (existingError) throw existingError;
+  if (existing && existing.length > 0) return existing[0] as DbInterventionFlag;
+
   const { data, error } = await supabase
     .from("intervention_flags")
     .insert({
@@ -660,6 +672,30 @@ export async function resolveHelpRequest(flagId: string, userId: string) {
     .single();
   if (error) throw error;
   return data;
+}
+
+export async function getActiveRaiseHand(studentId: string, caseId: string) {
+  const { data, error } = await supabase
+    .from("intervention_flags")
+    .select("*")
+    .eq("student_id", studentId)
+    .eq("case_id", caseId)
+    .eq("reason", "student_raise_hand")
+    .is("resolved_at", null)
+    .order("raised_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as DbInterventionFlag | null;
+}
+
+export async function lowerHand(caseId: string) {
+  const { data, error } = await supabase
+    .rpc("resolve_own_raise_hand", { p_case_id: caseId });
+
+  if (error) throw error;
+  return data as DbInterventionFlag | null;
 }
 
 // ─── Mastery ─────────────────────────────────────────────

@@ -250,7 +250,30 @@ export function useRaiseHand() {
   return useMutation({
     mutationFn: ({ studentId, caseId }: { studentId: string; caseId: string }) =>
       api.raiseHand(studentId, caseId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["help-requests-enriched"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["help-requests-enriched"] });
+      qc.invalidateQueries({ queryKey: ["active-raise-hand"] });
+    },
+  });
+}
+
+export function useActiveRaiseHand(studentId: string, caseId: string) {
+  return useQuery({
+    queryKey: ["active-raise-hand", studentId, caseId],
+    queryFn: () => api.getActiveRaiseHand(studentId, caseId),
+    enabled: !!studentId && !!caseId,
+    refetchInterval: studentId && caseId ? 4_000 : false,
+  });
+}
+
+export function useLowerHand() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ caseId }: { caseId: string }) => api.lowerHand(caseId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["help-requests-enriched"] });
+      qc.invalidateQueries({ queryKey: ["active-raise-hand"] });
+    },
   });
 }
 
