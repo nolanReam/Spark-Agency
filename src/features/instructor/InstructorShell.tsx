@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, Trash2, CheckSquare, RotateCcw } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field, ThinBar } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
@@ -6,11 +6,11 @@ import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
 import { CONCEPTS, CLEARANCE_LEVELS } from "../../lib/constants";
 import {
-  useCases, useCreateCase, useUpdateCase, useDeleteCase,
+  useCases, useCreateCase, useUpdateCase, useDeleteCase, useCaseBuilderAggregate, useSaveCaseBuilder,
   useSessions, useActiveSession, useSessionParticipants, useSessionQueueHealth,
   useHelpRequests, useCreateSession, useUpdateSessionStatus,
 } from "../../api/hooks";
-import type { DbCase, DbSession, EnrichedHelpRequest } from "../../api/client";
+import type { CaseBuilderSavePayload, DbCase, DbCaseConceptWeight, DbCaseLane, DbSession, EnrichedHelpRequest } from "../../api/client";
 import { generateSessionCode } from "../../api/client";
 
 // ─── Shared helpers ─────────────────────────────────────────────────
@@ -165,6 +165,8 @@ function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive,
 
 // ─── Case Builder Form ──────────────────────────────────────────────
 
+type CaseLaneName = "Required" | "Extension" | "Challenge";
+
 interface CaseFormData {
   id?: string; case_code: string; title: string; client_brief: string;
   min_clearance: number; reputation_reward: number; estimated_minutes: number;
@@ -172,7 +174,7 @@ interface CaseFormData {
   predict_prove_prompt: string; reflection_prompt: string; transfer_hint: string;
   concept_tags: string[];
   concept_weights: Record<string, number>;
-  lanes: { name: string; detail: string; available: boolean }[];
+  lanes: { name: CaseLaneName; detail: string; available: boolean }[];
   init_rules: string[];
 }
 
@@ -188,7 +190,22 @@ function emptyCaseForm(): CaseFormData {
   };
 }
 
-function dbToForm(c: DbCase): CaseFormData {
+function dbToForm(c: DbCase, savedLanes: DbCaseLane[] = [], savedWeights: DbCaseConceptWeight[] = []): CaseFormData {
+  const lanesByName = new Map(savedLanes.map(lane => [lane.lane, lane]));
+  const lanes = (["Required", "Extension", "Challenge"] as const).map(name => {
+    const saved = lanesByName.get(name);
+    return {
+      name,
+      detail: saved?.description ?? "",
+      available: saved?.available ?? name === "Required",
+    };
+  });
+  const weightsByConcept = new Map(savedWeights.map(weight => [weight.concept, weight.points]));
+  const initRules = (c.constraints ?? "")
+    .split(/\r?\n/)
+    .map(rule => rule.trim())
+    .filter(Boolean);
+
   return {
     id: c.id, case_code: c.case_code ?? "", title: c.title,
     client_brief: c.client_brief, min_clearance: c.min_clearance,
@@ -198,9 +215,9 @@ function dbToForm(c: DbCase): CaseFormData {
     reflection_prompt: c.reflection_prompt ?? "",
     transfer_hint: c.transfer_hint ?? "",
     concept_tags: c.concept_tags ?? [],
-    concept_weights: {}, // Not in DbCase
-    lanes: [{ name: "Required", detail: "", available: true }, { name: "Extension", detail: "", available: false }, { name: "Challenge", detail: "", available: false }],
-    init_rules: c.constraints ? [c.constraints] : [""],
+    concept_weights: Object.fromEntries(CONCEPTS.map(concept => [concept, weightsByConcept.get(concept) ?? 0])),
+    lanes,
+    init_rules: initRules.length > 0 ? initRules : [""],
   };
 }
 
@@ -216,16 +233,49 @@ function formToDbPartial(f: CaseFormData): Partial<DbCase> {
     reflection_prompt: f.reflection_prompt || null,
     transfer_hint: f.transfer_hint || null,
     concept_tags: f.concept_tags,
-    constraints: f.init_rules.filter(r => r.trim()).join("\n") || null,
+    constraints: f.init_rules.map(r => r.trim()).filter(Boolean).join("\n") || null,
     status: "draft",
+  };
+}
+
+function formToCaseBuilderPayload(f: CaseFormData, status: "draft" | "published"): CaseBuilderSavePayload {
+  return {
+    caseId: f.id,
+    caseData: { ...formToDbPartial(f), status },
+    lanes: f.lanes.map(lane => ({
+      lane: lane.name,
+      description: lane.detail,
+      available: lane.name === "Required" ? true : lane.available,
+    })),
+    conceptWeights: CONCEPTS.map(concept => ({
+      concept,
+      points: f.concept_weights[concept] ?? 0,
+    })),
   };
 }
 
 function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack: () => void }) {
   const isNew = !existing;
-  const [form, setForm] = useState<CaseFormData>(existing ? dbToForm(existing) : emptyCaseForm());
-  const createCase = useCreateCase();
-  const updateCase = useUpdateCase();
+  const aggregateQuery = useCaseBuilderAggregate(existing?.id ?? "");
+  const saveCaseBuilder = useSaveCaseBuilder();
+  const [form, setForm] = useState<CaseFormData>(emptyCaseForm);
+  const [hydrated, setHydrated] = useState(isNew);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const saveInFlight = useRef(false);
+  const hydratedCaseId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (isNew) {
+      setForm(emptyCaseForm());
+      setHydrated(true);
+      return;
+    }
+    if (aggregateQuery.data && hydratedCaseId.current !== aggregateQuery.data.case.id) {
+      setForm(dbToForm(aggregateQuery.data.case, aggregateQuery.data.lanes, aggregateQuery.data.conceptWeights));
+      hydratedCaseId.current = aggregateQuery.data.case.id;
+      setHydrated(true);
+    }
+  }, [aggregateQuery.data, isNew]);
 
   const set = (k: string, v: unknown) => setForm((f: CaseFormData) => ({ ...f, [k]: v }));
   const setWeight = (concept: string, v: string) => setForm((f: CaseFormData) => ({ ...f, concept_weights: { ...f.concept_weights, [concept]: parseInt(v) || 0 } }));
@@ -234,17 +284,27 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
   const setInitRule = (i: number, v: string) => { const r = [...form.init_rules]; r[i] = v; set("init_rules", r); };
   const removeInitRule = (i: number) => set("init_rules", form.init_rules.filter((_, idx) => idx !== i));
 
-  const handleSaveDraft = () => {
-    const data = formToDbPartial(form);
-    if (isNew) createCase.mutate(data, { onSuccess: () => onBack() });
-    else updateCase.mutate({ id: form.id!, updates: data }, { onSuccess: () => onBack() });
+  const handleSave = (status: "draft" | "published") => {
+    if (saveInFlight.current) return;
+    saveInFlight.current = true;
+    setSaveError(null);
+    saveCaseBuilder.mutate(formToCaseBuilderPayload(form, status), {
+      onSuccess: () => onBack(),
+      onError: (error: Error) => setSaveError(`Case save failed: ${error.message}`),
+      onSettled: () => { saveInFlight.current = false; },
+    });
   };
 
-  const handlePublish = () => {
-    const data = { ...formToDbPartial(form), status: "published" as const };
-    if (isNew) createCase.mutate(data, { onSuccess: () => onBack() });
-    else updateCase.mutate({ id: form.id!, updates: data }, { onSuccess: () => onBack() });
-  };
+  const handleSaveDraft = () => handleSave("draft");
+  const handlePublish = () => handleSave("published");
+
+  if (!isNew && aggregateQuery.isError) {
+    return <div><TopBar title="Edit Case" subtitle="Unable to load case data" onBack={onBack} /><Card style={{ padding: "1rem", border: "1px solid var(--danger)", color: "var(--danger)" }}>Case load failed: {aggregateQuery.error.message}</Card></div>;
+  }
+
+  if (!isNew && (!hydrated || aggregateQuery.isLoading)) {
+    return <div><TopBar title="Edit Case" subtitle="Loading case data…" onBack={onBack} /><Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> Loading case fields…</Card></div>;
+  }
 
   return (
     <div>
@@ -330,10 +390,11 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
             <SectionLabel icon={ArrowRight}>Transfer hint</SectionLabel>
             <Textarea rows={2} value={form.transfer_hint} placeholder="This pattern appears in real software when..." onChange={e => set("transfer_hint", e.target.value)} />
           </Card>
+          {saveError && <Card style={{ padding: "0.75rem 1rem", marginBottom: "0.75rem", border: "1px solid var(--danger)", background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.85rem" }}>{saveError}</Card>}
           <div style={{ display: "flex", gap: "0.6rem", justifyContent: "flex-end" }}>
             <Btn variant="ghost" onClick={onBack}>Cancel</Btn>
-            <Btn variant="subtle" onClick={handleSaveDraft}>Save as draft</Btn>
-            <Btn variant="primary" onClick={handlePublish}>Publish case</Btn>
+            <Btn variant="subtle" onClick={handleSaveDraft} disabled={saveCaseBuilder.isPending}>Save as draft</Btn>
+            <Btn variant="primary" onClick={handlePublish} disabled={saveCaseBuilder.isPending}>Publish case</Btn>
           </div>
         </div>
       </div>

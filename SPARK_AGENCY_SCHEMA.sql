@@ -356,6 +356,126 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.save_case_builder(
+  p_case_id UUID,
+  p_case_data JSONB,
+  p_lanes JSONB,
+  p_concept_weights JSONB
+)
+RETURNS UUID AS $$
+DECLARE
+  saved_case_id UUID;
+  supported_concepts CONSTANT TEXT[] := ARRAY[
+    'Variables', 'Loops', 'Conditionals', 'Events',
+    'Operators', 'Lists', 'Functions', 'Custom Blocks'
+  ];
+BEGIN
+  IF auth.uid() IS NULL OR NOT COALESCE(public.is_instructor(), false) THEN
+    RAISE EXCEPTION 'Instructor role required' USING ERRCODE = '42501';
+  END IF;
+
+  IF COALESCE(p_case_data ->> 'status', '') NOT IN ('draft', 'published') THEN
+    RAISE EXCEPTION 'Case Builder status must be draft or published' USING ERRCODE = '22023';
+  END IF;
+
+  IF jsonb_typeof(p_lanes) IS DISTINCT FROM 'array'
+     OR (SELECT count(*) FROM jsonb_array_elements(p_lanes)) <> 3
+     OR (SELECT count(DISTINCT lane)
+         FROM jsonb_to_recordset(p_lanes) AS lane_row(lane TEXT)) <> 3
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_to_recordset(p_lanes) AS lane_row(lane TEXT, description TEXT, available BOOLEAN)
+       WHERE lane_row.lane NOT IN ('Required', 'Extension', 'Challenge')
+          OR lane_row.description IS NULL
+          OR lane_row.available IS NULL
+     ) THEN
+    RAISE EXCEPTION 'Case Builder requires exactly Required, Extension, and Challenge lanes' USING ERRCODE = '22023';
+  END IF;
+
+  IF jsonb_typeof(p_concept_weights) IS DISTINCT FROM 'array'
+     OR (SELECT count(*) FROM jsonb_array_elements(p_concept_weights)) <> array_length(supported_concepts, 1)
+     OR (SELECT count(DISTINCT concept)
+         FROM jsonb_to_recordset(p_concept_weights) AS weight_row(concept TEXT)) <> array_length(supported_concepts, 1)
+     OR EXISTS (
+       SELECT 1
+       FROM jsonb_to_recordset(p_concept_weights) AS weight_row(concept TEXT, points INTEGER)
+       WHERE NOT (weight_row.concept = ANY(supported_concepts))
+          OR weight_row.points IS NULL
+          OR weight_row.points NOT BETWEEN 0 AND 15
+     ) THEN
+    RAISE EXCEPTION 'Case Builder requires one 0-15 weight for every supported concept' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_case_id IS NULL THEN
+    INSERT INTO public.cases (
+      case_code, title, client_brief, mission, constraints, tools_allowed,
+      difficulty_lane, concept_tags, min_clearance, status,
+      predict_prove_prompt, reflection_prompt, transfer_hint,
+      reputation_reward, estimated_minutes, created_by
+    ) VALUES (
+      NULLIF(btrim(p_case_data ->> 'case_code'), ''),
+      p_case_data ->> 'title',
+      COALESCE(p_case_data ->> 'client_brief', ''),
+      COALESCE(p_case_data ->> 'mission', ''),
+      NULLIF(p_case_data ->> 'constraints', ''),
+      ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_case_data -> 'tools_allowed', '[]'::jsonb))),
+      (p_case_data ->> 'difficulty_lane')::difficulty_lane,
+      ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_case_data -> 'concept_tags', '[]'::jsonb))),
+      (p_case_data ->> 'min_clearance')::SMALLINT,
+      (p_case_data ->> 'status')::case_status,
+      NULLIF(p_case_data ->> 'predict_prove_prompt', ''),
+      NULLIF(p_case_data ->> 'reflection_prompt', ''),
+      NULLIF(p_case_data ->> 'transfer_hint', ''),
+      (p_case_data ->> 'reputation_reward')::SMALLINT,
+      (p_case_data ->> 'estimated_minutes')::SMALLINT,
+      auth.uid()
+    )
+    RETURNING id INTO saved_case_id;
+  ELSE
+    UPDATE public.cases
+    SET case_code = NULLIF(btrim(p_case_data ->> 'case_code'), ''),
+        title = p_case_data ->> 'title',
+        client_brief = COALESCE(p_case_data ->> 'client_brief', ''),
+        mission = COALESCE(p_case_data ->> 'mission', ''),
+        constraints = NULLIF(p_case_data ->> 'constraints', ''),
+        tools_allowed = ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_case_data -> 'tools_allowed', '[]'::jsonb))),
+        difficulty_lane = (p_case_data ->> 'difficulty_lane')::difficulty_lane,
+        concept_tags = ARRAY(SELECT jsonb_array_elements_text(COALESCE(p_case_data -> 'concept_tags', '[]'::jsonb))),
+        min_clearance = (p_case_data ->> 'min_clearance')::SMALLINT,
+        status = (p_case_data ->> 'status')::case_status,
+        predict_prove_prompt = NULLIF(p_case_data ->> 'predict_prove_prompt', ''),
+        reflection_prompt = NULLIF(p_case_data ->> 'reflection_prompt', ''),
+        transfer_hint = NULLIF(p_case_data ->> 'transfer_hint', ''),
+        reputation_reward = (p_case_data ->> 'reputation_reward')::SMALLINT,
+        estimated_minutes = (p_case_data ->> 'estimated_minutes')::SMALLINT
+    WHERE id = p_case_id
+    RETURNING id INTO saved_case_id;
+
+    IF saved_case_id IS NULL THEN
+      RAISE EXCEPTION 'Case % not found', p_case_id USING ERRCODE = 'P0002';
+    END IF;
+  END IF;
+
+  INSERT INTO public.case_lanes (case_id, lane, description, available)
+  SELECT saved_case_id, lane_row.lane::lane_type, lane_row.description, lane_row.available
+  FROM jsonb_to_recordset(p_lanes) AS lane_row(lane TEXT, description TEXT, available BOOLEAN)
+  ON CONFLICT (case_id, lane) DO UPDATE
+    SET description = EXCLUDED.description,
+        available = EXCLUDED.available;
+
+  INSERT INTO public.case_concept_weights (case_id, concept, points)
+  SELECT saved_case_id, weight_row.concept, weight_row.points::SMALLINT
+  FROM jsonb_to_recordset(p_concept_weights) AS weight_row(concept TEXT, points INTEGER)
+  ON CONFLICT (case_id, concept) DO UPDATE
+    SET points = EXCLUDED.points;
+
+  RETURN saved_case_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+REVOKE ALL ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.resolve_own_raise_hand(p_case_id UUID)
 RETURNS intervention_flags AS $$
 DECLARE

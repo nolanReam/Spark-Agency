@@ -35,6 +35,23 @@ export interface DbCaseLane {
   description: string; available: boolean;
 }
 
+export interface DbCaseConceptWeight {
+  case_id: string; concept: string; points: number;
+}
+
+export interface CaseBuilderAggregate {
+  case: DbCase;
+  lanes: DbCaseLane[];
+  conceptWeights: DbCaseConceptWeight[];
+}
+
+export interface CaseBuilderSavePayload {
+  caseId?: string;
+  caseData: Partial<DbCase>;
+  lanes: Array<Pick<DbCaseLane, "lane" | "description" | "available">>;
+  conceptWeights: Array<Pick<DbCaseConceptWeight, "concept" | "points">>;
+}
+
 export interface DbSession {
   id: string; session_code: string; case_ids: string[];
   status: "draft" | "open" | "active" | "closing" | "closed";
@@ -108,7 +125,27 @@ export async function getCaseLanes(caseId: string) {
 export async function getCaseConceptWeights(caseId: string) {
   const { data, error } = await supabase.from("case_concept_weights").select("*").eq("case_id", caseId);
   if (error) throw error;
-  return data as { case_id: string; concept: string; points: number }[];
+  return data as DbCaseConceptWeight[];
+}
+
+export async function getCaseBuilderAggregate(caseId: string): Promise<CaseBuilderAggregate> {
+  const [caseData, lanes, conceptWeights] = await Promise.all([
+    getCaseById(caseId),
+    getCaseLanes(caseId),
+    getCaseConceptWeights(caseId),
+  ]);
+  return { case: caseData, lanes, conceptWeights };
+}
+
+export async function saveCaseBuilder(payload: CaseBuilderSavePayload): Promise<string> {
+  const { data, error } = await supabase.rpc("save_case_builder", {
+    p_case_id: payload.caseId ?? null,
+    p_case_data: payload.caseData,
+    p_lanes: payload.lanes,
+    p_concept_weights: payload.conceptWeights,
+  });
+  if (error) throw error;
+  return data as string;
 }
 
 export async function createCase(caseData: Partial<DbCase>) {

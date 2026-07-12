@@ -44,6 +44,30 @@ export function useCaseConceptWeights(caseId: string) {
   });
 }
 
+export function useCaseBuilderAggregate(caseId: string) {
+  return useQuery({
+    queryKey: ["case-builder", caseId],
+    queryFn: () => api.getCaseBuilderAggregate(caseId),
+    enabled: !!caseId,
+  });
+}
+
+export function useSaveCaseBuilder() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.saveCaseBuilder,
+    onSuccess: async (caseId) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["cases"] }),
+        qc.invalidateQueries({ queryKey: ["case", caseId] }),
+        qc.invalidateQueries({ queryKey: ["case-builder", caseId] }),
+        qc.invalidateQueries({ queryKey: ["case-lanes", caseId] }),
+        qc.invalidateQueries({ queryKey: ["case-concept-weights", caseId] }),
+      ]);
+    },
+  });
+}
+
 export function useCreateCase() {
   const qc = useQueryClient();
   return useMutation({

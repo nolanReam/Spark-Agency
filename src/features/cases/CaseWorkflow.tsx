@@ -195,7 +195,9 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
     brief: activeCase?.client_brief ?? "",
     lanes: laneDefs,
     tools: activeCase?.tools_allowed ?? [],
-    initRules: activeCase?.constraints ? [activeCase.constraints] : [],
+    initRules: activeCase?.constraints
+      ? activeCase.constraints.split(/\r?\n/).map(rule => rule.trim()).filter(Boolean)
+      : [],
     conceptWeights: conceptWeightRecord,
     transferHint: activeCase?.transfer_hint ?? "",
     predictPrompt: activeCase?.predict_prove_prompt ?? "What do you think will happen when you run your project?",
