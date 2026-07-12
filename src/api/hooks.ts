@@ -283,8 +283,7 @@ export function useResolveReview() {
 export function useRaiseHand() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ studentId, caseId }: { studentId: string; caseId: string }) =>
-      api.raiseHand(studentId, caseId),
+    mutationFn: ({ progressId }: { progressId: string }) => api.raiseHand(progressId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["help-requests-enriched"] });
       qc.invalidateQueries({ queryKey: ["active-raise-hand"] });
@@ -292,19 +291,19 @@ export function useRaiseHand() {
   });
 }
 
-export function useActiveRaiseHand(studentId: string, caseId: string) {
+export function useActiveRaiseHand(progressId: string) {
   return useQuery({
-    queryKey: ["active-raise-hand", studentId, caseId],
-    queryFn: () => api.getActiveRaiseHand(studentId, caseId),
-    enabled: !!studentId && !!caseId,
-    refetchInterval: studentId && caseId ? 4_000 : false,
+    queryKey: ["active-raise-hand", progressId],
+    queryFn: () => api.getActiveRaiseHand(progressId),
+    enabled: !!progressId,
+    refetchInterval: progressId ? 4_000 : false,
   });
 }
 
 export function useLowerHand() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => api.lowerHand(caseId),
+    mutationFn: ({ progressId }: { progressId: string }) => api.lowerHand(progressId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["help-requests-enriched"] });
       qc.invalidateQueries({ queryKey: ["active-raise-hand"] });

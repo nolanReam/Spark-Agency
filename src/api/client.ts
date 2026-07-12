@@ -82,7 +82,7 @@ export interface DbReflection {
 }
 
 export interface DbInterventionFlag {
-  id: string; student_id: string; case_id: string;
+  id: string; student_id: string; case_id: string; case_progress_id: string | null;
   reason: string; raised_at: string;
   resolved_at: string | null; resolved_by: string | null;
 }
@@ -672,30 +672,12 @@ export async function getClaimedReviews(userId: string) {
 
 // ─── Help Requests / Intervention ────────────────────────
 
-export async function raiseHand(studentId: string, caseId: string) {
-  const { data: existing, error: existingError } = await supabase
-    .from("intervention_flags")
-    .select("*")
-    .eq("student_id", studentId)
-    .eq("case_id", caseId)
-    .eq("reason", "student_raise_hand")
-    .is("resolved_at", null)
-    .limit(1);
-
-  if (existingError) throw existingError;
-  if (existing && existing.length > 0) return existing[0] as DbInterventionFlag;
-
+export async function raiseHand(progressId: string) {
   const { data, error } = await supabase
-    .from("intervention_flags")
-    .insert({
-      student_id: studentId,
-      case_id: caseId,
-      reason: "student_raise_hand",
-    })
-    .select()
-    .single();
+    .rpc("raise_hand_for_progress", { p_case_progress_id: progressId });
+
   if (error) throw error;
-  return data;
+  return data as DbInterventionFlag;
 }
 
 export async function getHelpRequests() {
@@ -719,12 +701,11 @@ export async function resolveHelpRequest(flagId: string, userId: string) {
   return data;
 }
 
-export async function getActiveRaiseHand(studentId: string, caseId: string) {
+export async function getActiveRaiseHand(progressId: string) {
   const { data, error } = await supabase
     .from("intervention_flags")
     .select("*")
-    .eq("student_id", studentId)
-    .eq("case_id", caseId)
+    .eq("case_progress_id", progressId)
     .eq("reason", "student_raise_hand")
     .is("resolved_at", null)
     .order("raised_at", { ascending: false })
@@ -735,9 +716,9 @@ export async function getActiveRaiseHand(studentId: string, caseId: string) {
   return data as DbInterventionFlag | null;
 }
 
-export async function lowerHand(caseId: string) {
+export async function lowerHand(progressId: string) {
   const { data, error } = await supabase
-    .rpc("resolve_own_raise_hand", { p_case_id: caseId });
+    .rpc("resolve_own_raise_hand_for_progress", { p_case_progress_id: progressId });
 
   if (error) throw error;
   return data as DbInterventionFlag | null;

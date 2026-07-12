@@ -100,8 +100,8 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   // Derive active case from progress for Raise Hand
   const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
-  const activeCaseId = activeProgress?.case_id ?? "";
-  const { data: activeRaiseHand } = useActiveRaiseHand(userId, activeCaseId);
+  const activeProgressId = activeProgress?.id ?? "";
+  const { data: activeRaiseHand } = useActiveRaiseHand(activeProgressId);
   const handRaised = !!activeRaiseHand;
   const handPending = raiseHand.isPending || lowerHand.isPending;
 
@@ -132,14 +132,14 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   const handleRaiseHand = () => {
     setHandError(false);
-    if (!activeCaseId) {
+    if (!activeProgressId) {
       setHandError(true);
       setTimeout(() => setHandError(false), 2000);
       return;
     }
 
     if (handRaised) {
-      lowerHand.mutate({ caseId: activeCaseId }, {
+      lowerHand.mutate({ progressId: activeProgressId }, {
         onError: (err: Error) => {
           console.error("Lower hand failed:", err.message);
           setHandError(true);
@@ -149,7 +149,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
       return;
     }
 
-    raiseHand.mutate({ studentId: userId, caseId: activeCaseId }, {
+    raiseHand.mutate({ progressId: activeProgressId }, {
       onError: (err: Error) => {
         console.error("Raise hand failed:", err.message);
         setHandError(true);
@@ -213,7 +213,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
       </Card>
       {handError ? (
         <Btn variant="danger" size="md" disabled style={{ width: "100%" }}>Could not raise hand</Btn>
-      ) : !activeCaseId ? (
+      ) : !activeProgressId ? (
         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", textAlign: "center", padding: "0.6rem", background: "var(--surface-2)", borderRadius: "9px" }}>Open a case to raise hand</div>
       ) : (
         <Btn

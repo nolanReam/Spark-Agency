@@ -221,13 +221,14 @@ CREATE TABLE IF NOT EXISTS reflections (
 );
 
 CREATE TABLE IF NOT EXISTS intervention_flags (
-  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id  UUID REFERENCES users(id),
-  case_id     UUID REFERENCES cases(id),
-  reason      flag_reason NOT NULL,
-  raised_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  resolved_at TIMESTAMPTZ,
-  resolved_by UUID REFERENCES users(id)
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id       UUID REFERENCES users(id),
+  case_id          UUID REFERENCES cases(id),
+  case_progress_id UUID REFERENCES case_progress(id) ON DELETE SET NULL,
+  reason           flag_reason NOT NULL,
+  raised_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resolved_at      TIMESTAMPTZ,
+  resolved_by      UUID REFERENCES users(id)
 );
 
 CREATE TABLE IF NOT EXISTS lane_attempts (
@@ -274,6 +275,7 @@ CREATE INDEX IF NOT EXISTS idx_cases_concept_tags ON cases USING GIN (concept_ta
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);
 CREATE INDEX IF NOT EXISTS idx_reviews_claimed ON reviews (review_type, reviewed_at) WHERE reviewed_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_flags_unresolved ON intervention_flags (resolved_at) WHERE resolved_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_flags_progress_unresolved ON intervention_flags (case_progress_id, reason, raised_at) WHERE resolved_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_mastery_student_concept ON concept_mastery_snapshots (student_id, concept_tag, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions (status);
 
@@ -546,23 +548,84 @@ $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 REVOKE ALL ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) TO authenticated;
 
-CREATE OR REPLACE FUNCTION public.resolve_own_raise_hand(p_case_id UUID)
+CREATE OR REPLACE FUNCTION public.raise_hand_for_progress(p_case_progress_id UUID)
 RETURNS intervention_flags AS $$
 DECLARE
-  resolved_flag intervention_flags;
+  caller_id UUID := auth.uid();
+  progress_row case_progress%ROWTYPE;
+  active_flag intervention_flags%ROWTYPE;
 BEGIN
-  UPDATE public.intervention_flags
-  SET resolved_at = now(),
-      resolved_by = auth.uid()
-  WHERE student_id = auth.uid()
-    AND case_id = p_case_id
+  IF caller_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  SELECT *
+  INTO progress_row
+  FROM public.case_progress
+  WHERE id = p_case_progress_id
+    AND student_id = caller_id
+    AND state NOT IN ('not_started', 'completed')
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Active case progress not found for authenticated student' USING ERRCODE = 'P0002';
+  END IF;
+
+  SELECT *
+  INTO active_flag
+  FROM public.intervention_flags
+  WHERE case_progress_id = progress_row.id
     AND reason = 'student_raise_hand'
     AND resolved_at IS NULL
-  RETURNING * INTO resolved_flag;
+  ORDER BY raised_at DESC
+  LIMIT 1;
+
+  IF FOUND THEN
+    RETURN active_flag;
+  END IF;
+
+  INSERT INTO public.intervention_flags (student_id, case_id, case_progress_id, reason)
+  VALUES (caller_id, progress_row.case_id, progress_row.id, 'student_raise_hand')
+  RETURNING * INTO active_flag;
+
+  RETURN active_flag;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+CREATE OR REPLACE FUNCTION public.resolve_own_raise_hand_for_progress(p_case_progress_id UUID)
+RETURNS intervention_flags AS $$
+DECLARE
+  caller_id UUID := auth.uid();
+  resolved_flag intervention_flags%ROWTYPE;
+BEGIN
+  IF caller_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  WITH resolved AS (
+    UPDATE public.intervention_flags
+    SET resolved_at = now(),
+        resolved_by = caller_id
+    WHERE student_id = caller_id
+      AND case_progress_id = p_case_progress_id
+      AND reason = 'student_raise_hand'
+      AND resolved_at IS NULL
+    RETURNING *
+  )
+  SELECT *
+  INTO resolved_flag
+  FROM resolved
+  ORDER BY raised_at DESC
+  LIMIT 1;
 
   RETURN resolved_flag;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+REVOKE ALL ON FUNCTION public.raise_hand_for_progress(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.raise_hand_for_progress(UUID) TO authenticated;
+REVOKE ALL ON FUNCTION public.resolve_own_raise_hand_for_progress(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand_for_progress(UUID) TO authenticated;
 
 -- ============================================================
 -- PHASE 6: ENABLE RLS ON ALL TABLES
@@ -723,7 +786,17 @@ CREATE POLICY "flags_read_own" ON intervention_flags FOR SELECT
   USING (auth.uid() = student_id OR is_volunteer_or_instructor());
 DROP POLICY IF EXISTS "flags_insert_student" ON intervention_flags;
 CREATE POLICY "flags_insert_student" ON intervention_flags FOR INSERT
-  WITH CHECK (auth.uid() = student_id);
+  WITH CHECK (
+    auth.uid() = student_id
+    AND case_progress_id IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM case_progress cp
+      WHERE cp.id = intervention_flags.case_progress_id
+        AND cp.student_id = auth.uid()
+        AND cp.case_id = intervention_flags.case_id
+    )
+  );
 DROP POLICY IF EXISTS "flags_update_volunteer" ON intervention_flags;
 CREATE POLICY "flags_update_volunteer" ON intervention_flags FOR UPDATE
   USING (is_volunteer_or_instructor());
@@ -781,7 +854,8 @@ GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_instructor() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.raise_hand_for_progress(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand_for_progress(UUID) TO authenticated;
 
 -- ============================================================
 -- PHASE 9: SEED DATA
