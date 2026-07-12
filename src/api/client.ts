@@ -549,32 +549,21 @@ export async function getEnrichedClaimedReviews(userId: string, sessionId: strin
 
 /** Rich help request with student and case data */
 export interface EnrichedHelpRequest {
-  id: string; student_id: string; case_id: string;
+  id: string; student_id: string; case_id: string; case_progress_id: string | null;
   reason: string; raised_at: string;
   resolved_at: string | null; resolved_by: string | null;
   student_name: string; case_title: string;
 }
 
-export async function getEnrichedHelpRequests() {
-  const { data, error } = await supabase
-    .from("intervention_flags")
-    .select(`
-      id, student_id, case_id, reason, raised_at, resolved_at, resolved_by,
-      users!intervention_flags_student_id_fkey(display_name),
-      cases!intervention_flags_case_id_fkey(title)
-    `)
-    .is("resolved_at", null)
-    .order("raised_at", { ascending: true });
-
-  if (error) throw error;
-
-  return (data || []).map((f: Record<string, unknown>) => {
+function mapEnrichedHelpRequests(data: Record<string, unknown>[] | null): EnrichedHelpRequest[] {
+  return (data || []).map((f) => {
     const studentUser = f.users as Record<string, unknown> | null;
     const caseData = f.cases as Record<string, unknown> | null;
     return {
       id: f.id as string,
       student_id: f.student_id as string,
       case_id: f.case_id as string,
+      case_progress_id: f.case_progress_id as string | null,
       reason: f.reason as string,
       raised_at: f.raised_at as string,
       resolved_at: f.resolved_at as string | null,
@@ -583,6 +572,39 @@ export async function getEnrichedHelpRequests() {
       case_title: (caseData?.title ?? "Untitled") as string,
     } satisfies EnrichedHelpRequest;
   });
+}
+
+export async function getEnrichedHelpRequests(sessionId: string) {
+  const { data, error } = await supabase
+    .from("intervention_flags")
+    .select(`
+      id, student_id, case_id, case_progress_id, reason, raised_at, resolved_at, resolved_by,
+      case_progress!inner(session_id),
+      users!intervention_flags_student_id_fkey(display_name),
+      cases!intervention_flags_case_id_fkey(title)
+    `)
+    .eq("case_progress.session_id", sessionId)
+    .is("resolved_at", null)
+    .order("raised_at", { ascending: true });
+
+  if (error) throw error;
+  return mapEnrichedHelpRequests(data as Record<string, unknown>[] | null);
+}
+
+/** Existing global instructor query; volunteer code must use the session-scoped query above. */
+export async function getGlobalEnrichedHelpRequests() {
+  const { data, error } = await supabase
+    .from("intervention_flags")
+    .select(`
+      id, student_id, case_id, case_progress_id, reason, raised_at, resolved_at, resolved_by,
+      users!intervention_flags_student_id_fkey(display_name),
+      cases!intervention_flags_case_id_fkey(title)
+    `)
+    .is("resolved_at", null)
+    .order("raised_at", { ascending: true });
+
+  if (error) throw error;
+  return mapEnrichedHelpRequests(data as Record<string, unknown>[] | null);
 }
 
 export async function getReviewQueue(_userId: string, reviewType?: string) {

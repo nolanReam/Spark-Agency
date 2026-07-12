@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Inbox, ClipboardCheck, UserCheck, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
+import { Inbox, HelpCircle, ClipboardCheck, UserCheck, AlertCircle, CheckCircle2, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
 import { Badge, Card, Btn, Input } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
@@ -10,10 +10,12 @@ import {
   useClaimedReviews,
   useClaimReview,
   useResolveReview,
+  useHelpRequests,
+  useResolveHelp,
   useJoinedLiveSession,
   useJoinSession,
 } from "../../api/hooks";
-import type { EnrichedReview } from "../../api/client";
+import type { EnrichedReview, EnrichedHelpRequest } from "../../api/client";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -94,7 +96,7 @@ interface QueueItem {
   student: string;
   caseTitle: string;
   stage: string;
-  type: "Implementation" | "Prediction";
+  type: "Implementation" | "Prediction" | "Help";
   lane: string;
   waitMin: number;
   status: "pending" | "claimed";
@@ -102,9 +104,30 @@ interface QueueItem {
   screenshotUrl: null; // removed — volunteers never upload screenshots
   prediction?: string;
   reasoning?: string;
+  reason?: string;
   // Keep original IDs for mutations
   _reviewId?: string;
+  _helpId?: string;
   _progressId?: string;
+}
+
+/** Convert enriched help request to QueueItem */
+function helpToItem(h: EnrichedHelpRequest): QueueItem {
+  return {
+    id: h.id,
+    student: h.student_name,
+    caseTitle: h.case_title,
+    stage: "",
+    type: "Help",
+    lane: "",
+    waitMin: waitMinutes(h.raised_at),
+    status: "pending",
+    claimedBy: null,
+    screenshotUrl: null,
+    reason: h.reason,
+    _helpId: h.id,
+    _progressId: h.case_progress_id ?? undefined,
+  };
 }
 
 /** Convert enriched review to QueueItem */
@@ -133,7 +156,7 @@ function QueueCard({ item, onClaim, claimedIds }: { item: QueueItem; onClaim: (i
   const claimed = claimedIds.includes(item.id);
   const tone = escTone(item.waitMin);
   const border = tone === "danger" ? "var(--danger)" : tone === "warning" ? "var(--warning)" : "var(--border)";
-  const typeTone = item.type === "Implementation" ? "brand" as const : "accent" as const;
+  const typeTone = item.type === "Implementation" ? "brand" as const : item.type === "Prediction" ? "accent" as const : "danger" as const;
 
   return (
     <Card style={{ padding: "1rem", border: `1px solid ${border}`, display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -146,9 +169,14 @@ function QueueCard({ item, onClaim, claimedIds }: { item: QueueItem; onClaim: (i
         <Badge tone={tone === "neutral" ? "brand" : tone}>{item.waitMin} min</Badge>
       </div>
       <div style={{ display: "flex", gap: "0.35rem", flexWrap: "wrap" }}>
-        <Badge tone={typeTone}>{item.type} review</Badge>
-        {item.lane && <Badge tone={item.lane === "Required" ? "neutral" : item.lane === "Extension" ? "accent" : "danger"}>{item.lane}</Badge>}
+        <Badge tone={typeTone}>{item.type === "Help" ? "Help request" : `${item.type} review`}</Badge>
+        {item.type !== "Help" && item.lane && <Badge tone={item.lane === "Required" ? "neutral" : item.lane === "Extension" ? "accent" : "danger"}>{item.lane}</Badge>}
       </div>
+      {item.type === "Help" && item.reason && (
+        <div style={{ fontSize: "0.8rem", display: "flex", gap: "0.4rem", alignItems: "flex-start" }}>
+          <AlertCircle size={13} color="var(--danger)" style={{ flexShrink: 0, marginTop: "0.1rem" }} />{item.reason}
+        </div>
+      )}
       {item.prediction && <div style={{ fontSize: "0.78rem", lineHeight: 1.5, background: "var(--surface-2)", padding: "0.5rem", borderRadius: "7px" }}><strong>I think:</strong> {item.prediction}</div>}
       <div style={{ marginTop: "auto" }}>
         {!claimed ? <Btn variant="primary" size="sm" onClick={() => onClaim(item)}>Claim</Btn> : <Badge tone="success">Claimed by you</Badge>}
@@ -158,17 +186,19 @@ function QueueCard({ item, onClaim, claimedIds }: { item: QueueItem; onClaim: (i
 }
 
 function ClaimedCard({ item, onResolve }: { item: QueueItem; onResolve: (item: QueueItem, outcome: string) => void }) {
-  const typeTone = item.type === "Implementation" ? "brand" as const : "accent" as const;
+  const typeTone = item.type === "Implementation" ? "brand" as const : item.type === "Prediction" ? "accent" as const : "danger" as const;
+  const isHelp = item.type === "Help";
 
   return (
     <Card style={{ padding: "1rem", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.5rem" }}>
         <div><div style={{ fontWeight: 700, fontSize: "0.9rem" }}>{item.student}</div><div style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{item.caseTitle}</div></div>
         <div style={{ display: "flex", gap: "0.3rem", flexShrink: 0 }}>
-          <Badge tone={typeTone}>{item.type}</Badge>
-          {item.lane && <Badge tone={item.lane === "Required" ? "neutral" : item.lane === "Extension" ? "accent" : "danger"}>{item.lane}</Badge>}
+          <Badge tone={typeTone}>{item.type === "Help" ? "Help" : item.type}</Badge>
+          {item.type !== "Help" && item.lane && <Badge tone={item.lane === "Required" ? "neutral" : item.lane === "Extension" ? "accent" : "danger"}>{item.lane}</Badge>}
         </div>
       </div>
+      {isHelp && item.reason && <div style={{ fontSize: "0.82rem", display: "flex", gap: "0.4rem", alignItems: "flex-start" }}><AlertCircle size={14} color="var(--danger)" style={{ flexShrink: 0, marginTop: "0.1rem" }} />{item.reason}</div>}
       {item.type === "Implementation" && <div style={{ fontSize: "0.78rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface-2)" }}>Walk through the Initialization Rules in person. Check any Extension/Challenge add-ons the student attempted.</div>}
       {item.prediction && (
         <div style={{ fontSize: "0.78rem", lineHeight: 1.5 }}>
@@ -177,8 +207,9 @@ function ClaimedCard({ item, onResolve }: { item: QueueItem; onResolve: (item: Q
         </div>
       )}
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
-        <Btn variant="success" icon={ThumbsUp} size="sm" onClick={() => onResolve(item, "approved")}>Approve</Btn>
-        <Btn variant="danger" icon={ThumbsDown} size="sm" onClick={() => onResolve(item, "returned")}>Send back</Btn>
+        {isHelp ? <Btn variant="success" icon={CheckCircle2} size="sm" onClick={() => onResolve(item, "helped")}>Mark helped</Btn> : (
+          <><Btn variant="success" icon={ThumbsUp} size="sm" onClick={() => onResolve(item, "approved")}>Approve</Btn><Btn variant="danger" icon={ThumbsDown} size="sm" onClick={() => onResolve(item, "returned")}>Send back</Btn></>
+        )}
       </div>
     </Card>
   );
@@ -193,6 +224,7 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   const userId = user?.id ?? "";
 
   const [view, setView] = useState("queue");
+  const [claimedHelpIds, setClaimedHelpIds] = useState<string[]>([]);
 
   // Live data hooks
   const joinedSessionQuery = useJoinedLiveSession(userId);
@@ -200,12 +232,17 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   const sessionId = joinedSession?.id ?? "";
   const { data: enrichedReviews, isLoading: reviewsLoading, error: reviewsError } = useReviewQueue(sessionId);
   const { data: enrichedClaimed, isLoading: claimedLoading } = useClaimedReviews(userId, sessionId);
+  const { data: enrichedHelp, isLoading: helpLoading, error: helpError } = useHelpRequests(sessionId);
 
   const claimReview = useClaimReview();
   const resolveReview = useResolveReview();
+  const resolveHelp = useResolveHelp();
 
   useEffect(() => {
-    if (joinedSession?.id) setView("queue");
+    if (joinedSession?.id) {
+      setView("queue");
+      setClaimedHelpIds([]);
+    }
   }, [joinedSession?.id]);
 
   if (!userId || joinedSessionQuery.isLoading) {
@@ -227,9 +264,14 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
 
   // Derive queue items from enriched data
   const allQueue: QueueItem[] = (enrichedReviews ?? []).map(reviewToItem);
-  const claimedItems: QueueItem[] = (enrichedClaimed ?? []).map(reviewToItem);
+  const helpQueue: QueueItem[] = (enrichedHelp ?? []).map(helpToItem).filter(item => !claimedHelpIds.includes(item.id));
+  const claimedItems: QueueItem[] = [
+    ...(enrichedClaimed ?? []).map(reviewToItem),
+    ...(enrichedHelp ?? []).map(helpToItem).filter(item => claimedHelpIds.includes(item.id)),
+  ];
 
   const sortedReviews = [...allQueue].sort((a, b) => b.waitMin - a.waitMin);
+  const sortedHelp = [...helpQueue].sort((a, b) => b.waitMin - a.waitMin);
   const claimedIds = claimedItems.map(c => c.id);
 
   // Auth-dependent display name
@@ -238,16 +280,27 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
   // ── Handlers ──
   const handleClaim = (item: QueueItem) => {
     if (!userId) return;
-    claimReview.mutate({ reviewId: item._reviewId!, userId });
+    if (item.type === "Help") {
+      setClaimedHelpIds(previous => [...previous, item.id]);
+    } else {
+      claimReview.mutate({ reviewId: item._reviewId!, userId });
+    }
   };
 
   const handleResolve = (item: QueueItem, outcome: string) => {
     if (!userId) return;
-    resolveReview.mutate({ reviewId: item._reviewId!, userId, outcome });
+    if (item.type === "Help") {
+      resolveHelp.mutate({ flagId: item._helpId!, userId }, {
+        onSuccess: () => setClaimedHelpIds(previous => previous.filter(id => id !== item.id)),
+      });
+    } else {
+      resolveReview.mutate({ reviewId: item._reviewId!, userId, outcome });
+    }
   };
 
   const navItems = [
     { key: "queue", label: "Review Queue", icon: Inbox },
+    { key: "help", label: "Help Requests", icon: HelpCircle },
     { key: "claimed", label: "Claimed", icon: ClipboardCheck },
   ];
 
@@ -266,7 +319,7 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
     </Card>
   );
 
-  const loading = reviewsLoading || claimedLoading;
+  const loading = reviewsLoading || claimedLoading || helpLoading;
 
   return (
     <>
@@ -288,6 +341,16 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
             {sortedReviews.length === 0 ? <Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>Queue is empty — great work!</Card> : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "0.85rem" }}>
                 {sortedReviews.map(item => <QueueCard key={item.id} item={item} onClaim={handleClaim} claimedIds={claimedIds} />)}
+              </div>
+            )}
+          </div>
+        )}
+        {!loading && view === "help" && (
+          <div>
+            <TopBar title="Help Requests" subtitle="Students who raised their hand or were flagged as stuck" right={<Badge tone="danger">{sortedHelp.length} pending</Badge>} />
+            {helpError ? <Card style={{ padding: "2rem", textAlign: "center", color: "var(--danger)" }}>Failed to load Help Requests. Please try again.</Card> : sortedHelp.length === 0 ? <Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>No help requests right now.</Card> : (
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "0.85rem" }}>
+                {sortedHelp.map(item => <QueueCard key={item.id} item={item} onClaim={handleClaim} claimedIds={claimedIds} />)}
               </div>
             )}
           </div>

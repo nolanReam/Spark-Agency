@@ -312,11 +312,15 @@ export function useLowerHand() {
 }
 
 /** Enriched help requests with student names and case titles */
-export function useHelpRequests() {
+export function useHelpRequests(sessionId?: string) {
+  const isGlobalInstructorQuery = sessionId === undefined;
   return useQuery({
-    queryKey: ["help-requests-enriched"],
-    queryFn: api.getEnrichedHelpRequests,
-    refetchInterval: 15_000,
+    queryKey: isGlobalInstructorQuery ? ["help-requests-enriched"] : ["help-requests-enriched", sessionId],
+    queryFn: () => isGlobalInstructorQuery
+      ? api.getGlobalEnrichedHelpRequests()
+      : api.getEnrichedHelpRequests(sessionId!),
+    enabled: isGlobalInstructorQuery || !!sessionId,
+    refetchInterval: isGlobalInstructorQuery || sessionId ? 15_000 : false,
   });
 }
 
