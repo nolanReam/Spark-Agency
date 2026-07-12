@@ -356,6 +356,76 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+CREATE OR REPLACE FUNCTION public.join_session_by_code(p_session_code TEXT)
+RETURNS public.sessions AS $$
+DECLARE
+  joining_user_id UUID := auth.uid();
+  joining_role public.user_role;
+  normalized_code TEXT := upper(btrim(p_session_code));
+  joined_session public.sessions%ROWTYPE;
+  other_live_session_code TEXT;
+BEGIN
+  IF joining_user_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  IF normalized_code IS NULL OR normalized_code = '' THEN
+    RAISE EXCEPTION 'Session code is required' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT role
+  INTO joining_role
+  FROM public.users
+  WHERE id = joining_user_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'User profile not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF joining_role NOT IN ('student'::public.user_role, 'volunteer'::public.user_role) THEN
+    RAISE EXCEPTION 'Only students and volunteers can join sessions' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT *
+  INTO joined_session
+  FROM public.sessions
+  WHERE session_code = normalized_code
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Session code not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF joined_session.status NOT IN ('open'::public.session_status, 'active'::public.session_status) THEN
+    RAISE EXCEPTION 'Session is not open' USING ERRCODE = '55000';
+  END IF;
+
+  SELECT s.session_code
+  INTO other_live_session_code
+  FROM public.session_participants sp
+  JOIN public.sessions s ON s.id = sp.session_id
+  WHERE sp.student_id = joining_user_id
+    AND s.id <> joined_session.id
+    AND s.status IN ('open'::public.session_status, 'active'::public.session_status)
+  ORDER BY sp.joined_at DESC
+  LIMIT 1;
+
+  IF other_live_session_code IS NOT NULL THEN
+    RAISE EXCEPTION 'Already joined to live session %', other_live_session_code USING ERRCODE = '23514';
+  END IF;
+
+  INSERT INTO public.session_participants (session_id, student_id)
+  VALUES (joined_session.id, joining_user_id)
+  ON CONFLICT (session_id, student_id) DO NOTHING;
+
+  RETURN joined_session;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+REVOKE ALL ON FUNCTION public.join_session_by_code(TEXT) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.join_session_by_code(TEXT) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.save_case_builder(
   p_case_id UUID,
   p_case_data JSONB,

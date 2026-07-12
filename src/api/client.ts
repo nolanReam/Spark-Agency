@@ -218,22 +218,27 @@ export async function getActiveSession() {
   return data as DbSession | null;
 }
 
-export async function joinSession(sessionCode: string, studentId: string) {
-  const { data: session, error: sessionErr } = await supabase
-    .from("sessions")
-    .select("id, status")
-    .eq("session_code", sessionCode)
-    .in("status", ["open", "active"])
-    .single();
-
-  if (sessionErr || !session) throw new Error("Session not found or not open");
-
-  const { error } = await supabase
+export async function getJoinedLiveSession(userId: string) {
+  const { data, error } = await supabase
     .from("session_participants")
-    .insert({ session_id: session.id, student_id: studentId });
+    .select("sessions!inner(*)")
+    .eq("student_id", userId)
+    .in("sessions.status", ["open", "active"]);
 
-  if (error && error.code !== "23505") throw error; // ignore duplicate
-  return session as { id: string; status: string };
+  if (error) throw error;
+  if (!data || data.length === 0) return null;
+  if (data.length > 1) throw new Error("User belongs to multiple live sessions");
+
+  const joined = data[0].sessions as DbSession | DbSession[] | null;
+  return (Array.isArray(joined) ? joined[0] : joined) ?? null;
+}
+
+export async function joinSession(sessionCode: string) {
+  const { data, error } = await supabase.rpc("join_session_by_code", {
+    p_session_code: sessionCode,
+  });
+  if (error) throw error;
+  return data as DbSession;
 }
 
 export async function getSessionCases(sessionId: string) {

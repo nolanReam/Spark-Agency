@@ -111,6 +111,15 @@ export function useActiveSession() {
   });
 }
 
+export function useJoinedLiveSession(userId: string) {
+  return useQuery({
+    queryKey: ["joined-live-session", userId],
+    queryFn: () => api.getJoinedLiveSession(userId),
+    enabled: !!userId,
+    refetchInterval: userId ? 12_000 : false,
+  });
+}
+
 export function useCreateSession() {
   const qc = useQueryClient();
   return useMutation({
@@ -143,10 +152,9 @@ export function useSessionCases(sessionId: string) {
 export function useJoinSession() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ code, studentId }: { code: string; studentId: string }) =>
-      api.joinSession(code, studentId),
+    mutationFn: ({ code }: { code: string }) => api.joinSession(code),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["active-session"] });
+      qc.invalidateQueries({ queryKey: ["joined-live-session"] });
       qc.invalidateQueries({ queryKey: ["session-participants"] });
     },
   });
