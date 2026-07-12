@@ -231,20 +231,21 @@ export function useLatestApprovedPrediction(progressId: string, enabled = true) 
 // ─── Reviews ─────────────────────────────────────────────
 
 /** Enriched review queue with student names, case titles, prediction data */
-export function useReviewQueue() {
+export function useReviewQueue(sessionId: string) {
   return useQuery({
-    queryKey: ["review-queue-enriched"],
-    queryFn: api.getEnrichedReviewQueue,
-    refetchInterval: 20_000,
+    queryKey: ["review-queue-enriched", sessionId],
+    queryFn: () => api.getEnrichedReviewQueue(sessionId),
+    enabled: !!sessionId,
+    refetchInterval: sessionId ? 20_000 : false,
   });
 }
 
 /** Enriched claimed reviews for the current user */
-export function useClaimedReviews(userId: string) {
+export function useClaimedReviews(userId: string, sessionId: string) {
   return useQuery({
-    queryKey: ["claimed-reviews-enriched", userId],
-    queryFn: () => api.getEnrichedClaimedReviews(userId),
-    enabled: !!userId,
+    queryKey: ["claimed-reviews-enriched", userId, sessionId],
+    queryFn: () => api.getEnrichedClaimedReviews(userId, sessionId),
+    enabled: !!userId && !!sessionId,
   });
 }
 

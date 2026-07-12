@@ -446,19 +446,21 @@ export interface EnrichedReview {
 }
 
 /** Fetch review queue with rich joined data — student name, case title, predictions */
-export async function getEnrichedReviewQueue() {
+export async function getEnrichedReviewQueue(sessionId: string) {
   const { data, error } = await supabase
     .from("reviews")
     .select(`
       id, case_progress_id, review_type, prediction_id, requested_at,
       reviewed_at, reviewer_id, claimed_by, claimed_at, outcome, note,
-      case_progress!inner(student_id, case_id, state,
+      case_progress!inner(student_id, case_id, session_id, state,
         users!case_progress_student_id_fkey(display_name),
         cases!case_progress_case_id_fkey(title, case_code, difficulty_lane)
       ),
       predictions!reviews_prediction_id_fkey(prediction_text, reasoning_text)
     `)
+    .eq("case_progress.session_id", sessionId)
     .is("reviewed_at", null)
+    .is("claimed_by", null)
     .order("requested_at", { ascending: true });
 
   if (error) throw error;
@@ -496,18 +498,19 @@ export async function getEnrichedReviewQueue() {
 }
 
 /** Fetch claimed reviews for a user with rich joined data */
-export async function getEnrichedClaimedReviews(userId: string) {
+export async function getEnrichedClaimedReviews(userId: string, sessionId: string) {
   const { data, error } = await supabase
     .from("reviews")
     .select(`
       id, case_progress_id, review_type, prediction_id, requested_at,
       reviewed_at, reviewer_id, claimed_by, claimed_at, outcome, note,
-      case_progress!inner(student_id, case_id, state,
+      case_progress!inner(student_id, case_id, session_id, state,
         users!case_progress_student_id_fkey(display_name),
         cases!case_progress_case_id_fkey(title, case_code, difficulty_lane)
       ),
       predictions!reviews_prediction_id_fkey(prediction_text, reasoning_text)
     `)
+    .eq("case_progress.session_id", sessionId)
     .eq("claimed_by", userId)
     .is("reviewed_at", null)
     .order("requested_at", { ascending: true });
