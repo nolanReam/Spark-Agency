@@ -12,7 +12,6 @@ import {
   useStudentMastery,
   useCaseById,
   useCaseConceptWeights,
-  useActiveSession,
 } from "../../api/hooks";
 
 // ─── DB state → StageKey mapping ───────────────────────────────────
@@ -60,17 +59,15 @@ function nextAction(dbState: string): NextAction {
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function StudentHome({ caseStage: _caseStage, onOpenCase, onGoToCases }: {
-  caseStage: StageKey; onOpenCase: () => void; onGoToCases: () => void;
+export function StudentHome({ sessionId, caseStage: _caseStage, onOpenCase, onGoToCases }: {
+  sessionId: string; caseStage: StageKey; onOpenCase: () => void; onGoToCases: () => void;
 }) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
 
   // Data hooks
   const { data: profile, isLoading: profileLoading } = useStudentProfile(userId);
-  const { data: activeSession } = useActiveSession();
-  const sessionId = activeSession?.id ?? "";
-  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId || undefined);
+  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId);
   const { data: mastery, isLoading: masteryLoading } = useStudentMastery(userId);
 
   // Derive active case from progress

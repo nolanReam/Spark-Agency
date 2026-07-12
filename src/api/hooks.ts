@@ -153,9 +153,11 @@ export function useJoinSession() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ code }: { code: string }) => api.joinSession(code),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["joined-live-session"] });
-      qc.invalidateQueries({ queryKey: ["session-participants"] });
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["joined-live-session"] }),
+        qc.invalidateQueries({ queryKey: ["session-participants"] }),
+      ]);
     },
   });
 }
@@ -173,12 +175,12 @@ export function useCreateCaseProgress() {
   });
 }
 
-export function useStudentProgress(studentId: string, sessionId?: string) {
+export function useStudentProgress(studentId: string, sessionId?: string, enabled = true) {
   return useQuery({
     queryKey: ["student-progress", studentId, sessionId],
     queryFn: () => api.getStudentProgress(studentId, sessionId),
-    enabled: !!studentId,
-    refetchInterval: studentId ? 4_000 : false,
+    enabled: enabled && !!studentId,
+    refetchInterval: enabled && studentId ? 4_000 : false,
   });
 }
 

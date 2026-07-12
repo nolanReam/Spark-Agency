@@ -11,7 +11,6 @@ import {
   useCaseById,
   useCaseLanes,
   useCaseConceptWeights,
-  useActiveSession,
   useAdvanceStage,
   useSubmitPrediction,
   useLatestApprovedPrediction,
@@ -48,8 +47,8 @@ const STAGE_TO_DB: Record<string, string> = {
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStage, caseId, readOnly, onBack }: {
-  stage: StageKey; setStage: (s: StageKey) => void; caseId?: string; readOnly?: boolean; onBack: () => void;
+export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _externalSetStage, caseId, readOnly, onBack }: {
+  sessionId: string; stage: StageKey; setStage: (s: StageKey) => void; caseId?: string; readOnly?: boolean; onBack: () => void;
 }) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
@@ -65,9 +64,7 @@ export function CaseWorkflow({ stage: _externalStage, setStage: _externalSetStag
   const [optimisticDbState, setOptimisticDbState] = useState<string | null>(null);
 
   // Live data hooks
-  const { data: activeSession } = useActiveSession();
-  const sessionId = activeSession?.id ?? "";
-  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId || undefined);
+  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId);
 
   // Derive active case from progress — or use explicitly provided caseId
   // caseId + readOnly  → completed case view (read-only)

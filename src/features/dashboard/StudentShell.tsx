@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { LayoutDashboard, FileText, GraduationCap, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
+import { LayoutDashboard, FileText, GraduationCap, Users, Loader2 } from "lucide-react";
 import { Sidebar } from "../../components/layout";
-import { Card, Btn } from "../../components/ui";
+import { Card, Btn, Input } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
-import { useStudentProfile, useActiveSession, useRaiseHand, useActiveRaiseHand, useLowerHand, useStudentProgress, useCreateCaseProgress } from "../../api/hooks";
+import { useStudentProfile, useJoinedLiveSession, useJoinSession, useRaiseHand, useActiveRaiseHand, useLowerHand, useStudentProgress, useCreateCaseProgress } from "../../api/hooks";
 import { StudentHome } from "./StudentHome";
 import { StudentCases } from "../cases/StudentCases";
 import { StudentProgress } from "../cases/StudentProgress";
@@ -24,6 +25,51 @@ const ACTIVE_PROGRESS_STATES = new Set([
   "reflection_pending",
 ]);
 
+function joinErrorMessage(error: Error): string {
+  const message = error.message.toLowerCase();
+  if (message.includes("session code not found")) return "We couldn't find that session code.";
+  if (message.includes("session is not open")) return "That session is no longer open.";
+  if (message.includes("already joined to live session")) return "You're already joined to another live session.";
+  if (message.includes("only students and volunteers")) return "This account cannot join a student session.";
+  return "Could not join the session. Please check the code and try again.";
+}
+
+function StudentJoinSession() {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const joinSession = useJoinSession();
+
+  const handleSubmit = (event: FormEvent) => {
+    event.preventDefault();
+    const normalizedCode = code.trim();
+    if (!normalizedCode) {
+      setError("Enter a session code.");
+      return;
+    }
+
+    setError(null);
+    joinSession.mutate({ code: normalizedCode }, {
+      onError: (joinError: Error) => setError(joinErrorMessage(joinError)),
+    });
+  };
+
+  return (
+    <main style={{ flex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem" }}>
+      <Card style={{ width: "100%", maxWidth: 420, padding: "2rem" }}>
+        <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.5rem", margin: "0 0 0.5rem" }}>Join a session</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: 1.5, margin: "0 0 1.25rem" }}>Enter the session code provided by your instructor.</p>
+        <form onSubmit={handleSubmit}>
+          <Input value={code} onChange={event => setCode(event.target.value.toUpperCase())} placeholder="AGENCY-271" aria-label="Session code" autoCapitalize="characters" autoComplete="off" disabled={joinSession.isPending} />
+          {error && <div style={{ color: "var(--danger)", background: "var(--danger-soft)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.65rem 0.75rem", fontSize: "0.82rem", marginTop: "0.75rem" }}>{error}</div>}
+          <Btn type="submit" disabled={joinSession.isPending} style={{ width: "100%", justifyContent: "center", marginTop: "1rem" }}>
+            {joinSession.isPending ? "Joining…" : "Join session"}
+          </Btn>
+        </form>
+      </Card>
+    </main>
+  );
+}
+
 export function StudentShell({ role, theme, setTheme, onSignOut }: {
   role: UserRole; theme: "light" | "dark"; setTheme: (t: "light" | "dark") => void; onSignOut?: () => void;
 }) {
@@ -40,16 +86,17 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   // Live data for sidebar
   const { data: profile } = useStudentProfile(userId);
-  const { data: activeSession } = useActiveSession();
-  const { data: progress } = useStudentProgress(userId, activeSession?.id);
+  const joinedSessionQuery = useJoinedLiveSession(userId);
+  const joinedSession = joinedSessionQuery.data;
+  const { data: progress } = useStudentProgress(userId, joinedSession?.id, !!joinedSession?.id);
   const raiseHand = useRaiseHand();
   const lowerHand = useLowerHand();
   const createCaseProgress = useCreateCaseProgress();
 
   const clearanceLevel = profile?.clearance_level ?? 1;
   const clearanceTitle = CLEARANCE_LEVELS.find(l => l.level === clearanceLevel)?.title ?? "Developer";
-  const sessionTitle = activeSession?.session_code ?? "No active session";
-  const sessionStatus = activeSession?.status ?? "unknown";
+  const sessionTitle = joinedSession?.session_code ?? "No active session";
+  const sessionStatus = joinedSession?.status ?? "unknown";
 
   // Derive active case from progress for Raise Hand
   const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
@@ -57,6 +104,31 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const { data: activeRaiseHand } = useActiveRaiseHand(userId, activeCaseId);
   const handRaised = !!activeRaiseHand;
   const handPending = raiseHand.isPending || lowerHand.isPending;
+
+  useEffect(() => {
+    if (!joinedSession?.id) return;
+    setView("home");
+    setWorkflowCaseId(null);
+    setReadOnly(false);
+    setStartError(null);
+  }, [joinedSession?.id]);
+
+  if (!userId || joinedSessionQuery.isLoading) {
+    return <main style={{ flex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> Loading session…</main>;
+  }
+
+  if (joinedSessionQuery.isError) {
+    return (
+      <main style={{ flex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem" }}>
+        <Card style={{ maxWidth: 420, padding: "2rem", textAlign: "center" }}>
+          <div style={{ color: "var(--danger)", marginBottom: "1rem" }}>Could not load your joined session.</div>
+          <Btn variant="ghost" onClick={() => joinedSessionQuery.refetch()}>Try again</Btn>
+        </Card>
+      </main>
+    );
+  }
+
+  if (!joinedSession) return <StudentJoinSession />;
 
   const handleRaiseHand = () => {
     setHandError(false);
@@ -88,7 +160,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   const handleStartCase = (caseId: string) => {
     setStartError(null);
-    if (!activeSession?.id) {
+    if (!joinedSession.id) {
       setStartError("No active session — join a session first.");
       return;
     }
@@ -99,7 +171,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
     setReadOnly(false);
     setWorkflowCaseId(caseId); // pass caseId so CaseWorkflow can fetch it directly
     createCaseProgress.mutate(
-      { studentId: userId, caseId, sessionId: activeSession.id },
+      { studentId: userId, caseId, sessionId: joinedSession.id },
       {
         onSuccess: () => setView("case-detail"),
         onError: (err: Error) => {
@@ -161,7 +233,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
     <>
       <Sidebar items={navItems} view={view} setView={setView} role={role} theme={theme} setTheme={setTheme} bottomContent={bottomContent} onSignOut={onSignOut} />
       <main style={{ flex: 1, padding: "1.75rem 2.25rem", overflow: "auto" }}>
-        {view === "home" && <StudentHome caseStage={caseStage} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onGoToCases={() => setView("cases")} />}
+        {view === "home" && <StudentHome sessionId={joinedSession.id} caseStage={caseStage} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onGoToCases={() => setView("cases")} />}
         {view === "cases" && (
           <>
             {startError && (
@@ -170,10 +242,10 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
                 <Btn variant="ghost" size="sm" onClick={() => setStartError(null)}>Dismiss</Btn>
               </Card>
             )}
-            <StudentCases onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onStartCase={handleStartCase} onViewCase={handleViewCase} />
+            <StudentCases sessionId={joinedSession.id} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onStartCase={handleStartCase} onViewCase={handleViewCase} />
           </>
         )}
-        {view === "case-detail" && <CaseWorkflow stage={caseStage} setStage={setCaseStage} caseId={workflowCaseId ?? undefined} readOnly={readOnly} onBack={() => { setView("home"); setWorkflowCaseId(null); setReadOnly(false); setStartError(null); }} />}
+        {view === "case-detail" && <CaseWorkflow sessionId={joinedSession.id} stage={caseStage} setStage={setCaseStage} caseId={workflowCaseId ?? undefined} readOnly={readOnly} onBack={() => { setView("home"); setWorkflowCaseId(null); setReadOnly(false); setStartError(null); }} />}
         {view === "progress" && <StudentProgress />}
       </main>
     </>

@@ -7,8 +7,7 @@ import {
   useStudentProfile,
   useStudentProgress,
   useCaseById,
-  useCases,
-  useActiveSession,
+  useSessionCases,
 } from "../../api/hooks";
 // DbCase import removed
 
@@ -26,7 +25,8 @@ const ACTIVE_PROGRESS_STATES = new Set([
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
+export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }: {
+  sessionId: string;
   onOpenCase: () => void;
   onStartCase: (caseId: string) => void;
   onViewCase: (caseId: string) => void;
@@ -38,10 +38,8 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
 
   // Data hooks
   const { data: profile } = useStudentProfile(userId);
-  const { data: activeSession } = useActiveSession();
-  const sessionId = activeSession?.id ?? "";
-  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId || undefined);
-  const { data: publishedCases, isLoading: casesLoading } = useCases("published");
+  const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId);
+  const { data: sessionCases, isLoading: casesLoading } = useSessionCases(sessionId);
 
   const clearanceLevel = profile?.clearance_level ?? 1;
 
@@ -56,9 +54,9 @@ export function StudentCases({ onOpenCase, onStartCase, onViewCase }: {
   const activeCaseIds = new Set((progress ?? []).filter(p => ACTIVE_PROGRESS_STATES.has(p.state)).map(p => p.case_id));
 
   // Available = published minus anything in progress
-  const availableCases = (publishedCases ?? []).filter(c => !activeCaseIds.has(c.id) && !completedCaseIds.has(c.id));
+  const availableCases = (sessionCases ?? []).filter(c => !activeCaseIds.has(c.id) && !completedCaseIds.has(c.id));
   // Completed cases = published that are in the completed set
-  const completedCases = (publishedCases ?? []).filter(c => completedCaseIds.has(c.id));
+  const completedCases = (sessionCases ?? []).filter(c => completedCaseIds.has(c.id));
 
   const loading = progressLoading || casesLoading;
 
