@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, Trash2, CheckSquare, RotateCcw } from "lucide-react";
+import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, CheckSquare, RotateCcw } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field, ThinBar } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
 import { CONCEPTS, CLEARANCE_LEVELS } from "../../lib/constants";
 import {
-  useCases, useCreateCase, useUpdateCase, useDeleteCase, useCaseBuilderAggregate, useSaveCaseBuilder,
+  useCases, useCreateCase, useUpdateCase, useCaseBuilderAggregate, useSaveCaseBuilder,
   useSessions, useActiveSession, useSessionParticipants, useSessionQueueHealth,
   useHelpRequests, useCreateSession, useUpdateSessionStatus,
 } from "../../api/hooks";
@@ -33,10 +33,10 @@ const DB_STATE_LABEL: Record<string, string> = {
 
 // ─── Case List View ─────────────────────────────────────────────────
 
-function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive, onDelete, onRestore, onView }: {
+function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive, onRestore, onView }: {
   cases: DbCase[]; onNew: () => void; onEdit: (c: DbCase) => void;
   onPublish: (c: DbCase) => void; onDuplicate: (c: DbCase) => void; onArchive: (c: DbCase) => void;
-  onDelete: (c: DbCase) => void; onRestore: (c: DbCase) => void; onView: (c: DbCase) => void;
+  onRestore: (c: DbCase) => void; onView: (c: DbCase) => void;
 }) {
   const [tab, setTab] = useState("published");
   const [selectMode, setSelectMode] = useState(false);
@@ -86,6 +86,12 @@ function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive,
         ))}
       </div>
 
+      {tab === "archived" && (
+        <p style={{ margin: "-0.5rem 0 1rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>
+          Archived cases are hidden from active use but kept for workshop history. Restore a case to edit or reuse it.
+        </p>
+      )}
+
       {/* Bulk action bar */}
       {selectMode && selected.size > 0 && (
         <Card style={{ padding: "0.75rem 1rem", marginBottom: "1rem", border: "1px solid var(--brand)", background: "var(--brand-soft)", display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap", justifyContent: "space-between" }}>
@@ -102,10 +108,7 @@ function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive,
               <Btn variant="subtle" size="sm" icon={Archive} onClick={() => handleBulk(onArchive)}>Archive</Btn>
             )}
             {bulkArchived && (
-              <>
-                <Btn variant="ghost" size="sm" icon={RotateCcw} onClick={() => handleBulk(onRestore)}>Restore</Btn>
-                <Btn variant="danger" size="sm" icon={Trash2} onClick={() => { handleBulk(onDelete); }}>Delete</Btn>
-              </>
+              <Btn variant="ghost" size="sm" icon={RotateCcw} onClick={() => handleBulk(onRestore)}>Restore</Btn>
             )}
           </div>
         </Card>
@@ -150,7 +153,6 @@ function CaseListView({ cases, onNew, onEdit, onPublish, onDuplicate, onArchive,
                     <>
                       <Btn variant="ghost" size="sm" icon={Eye} onClick={() => onView(c)}>View</Btn>
                       <Btn variant="ghost" size="sm" icon={RotateCcw} onClick={() => onRestore(c)}>Restore</Btn>
-                      <Btn variant="danger" size="sm" icon={Trash2} onClick={() => onDelete(c)}>Remove</Btn>
                     </>
                   )}
                 </div>
@@ -753,7 +755,6 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
   const { data: sessions, isLoading: sessionsLoading } = useSessions();
   const createCase = useCreateCase();
   const updateCase = useUpdateCase();
-  const deleteCase = useDeleteCase();
   const { data: activeSession } = useActiveSession();
   const { data: participants } = useSessionParticipants(activeSession?.id ?? "");
   const { data: queueHealth } = useSessionQueueHealth(activeSession?.id ?? "");
@@ -831,9 +832,6 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
           }}
           onArchive={c => updateCase.mutate({ id: c.id, updates: { status: "archived" } }, {
             onError: (err: Error) => setErrorMsg(`Archive failed: ${err.message}`),
-          })}
-          onDelete={c => deleteCase.mutate(c.id, {
-            onError: (err: Error) => setErrorMsg(`Delete failed: ${err.message}`),
           })}
           onRestore={c => updateCase.mutate({ id: c.id, updates: { status: "draft" } }, {
             onError: (err: Error) => setErrorMsg(`Restore failed: ${err.message}`),
