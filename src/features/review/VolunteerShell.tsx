@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Inbox, HelpCircle, ClipboardCheck, UserCheck, AlertCircle, CheckCircle2, ThumbsUp, ThumbsDown, Loader2 } from "lucide-react";
-import { Badge, Card, Btn, Input } from "../../components/ui";
+import { Badge, Card, Btn, Input, Textarea } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
@@ -185,9 +185,25 @@ function QueueCard({ item, onClaim, claimedIds }: { item: QueueItem; onClaim: (i
   );
 }
 
-function ClaimedCard({ item, onResolve }: { item: QueueItem; onResolve: (item: QueueItem, outcome: string) => void }) {
+function ClaimedCard({ item, onResolve, isResolving }: {
+  item: QueueItem;
+  onResolve: (item: QueueItem, outcome: string, note?: string) => void;
+  isResolving: boolean;
+}) {
+  const [returnNote, setReturnNote] = useState("");
+  const [returnError, setReturnError] = useState<string | null>(null);
   const typeTone = item.type === "Implementation" ? "brand" as const : item.type === "Prediction" ? "accent" as const : "danger" as const;
   const isHelp = item.type === "Help";
+
+  const handleReturn = () => {
+    const trimmedNote = returnNote.trim();
+    if (!trimmedNote) {
+      setReturnError("Write a feedback note before returning this review.");
+      return;
+    }
+    setReturnError(null);
+    onResolve(item, "returned", trimmedNote);
+  };
 
   return (
     <Card style={{ padding: "1rem", border: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
@@ -206,9 +222,25 @@ function ClaimedCard({ item, onResolve }: { item: QueueItem; onResolve: (item: Q
           {item.reasoning && <div style={{ padding: "0.5rem", borderRadius: "7px", background: "var(--surface-2)" }}><strong>Because:</strong> {item.reasoning}</div>}
         </div>
       )}
+      {!isHelp && (
+        <div>
+          <label style={{ display: "block", fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", marginBottom: "0.3rem" }}>Feedback for a return</label>
+          <Textarea
+            rows={3}
+            value={returnNote}
+            placeholder="Explain what the student should revise..."
+            disabled={isResolving}
+            onChange={event => {
+              setReturnNote(event.target.value);
+              if (returnError && event.target.value.trim()) setReturnError(null);
+            }}
+          />
+          {returnError && <div style={{ marginTop: "0.35rem", color: "var(--danger)", fontSize: "0.76rem", fontWeight: 600 }}>{returnError}</div>}
+        </div>
+      )}
       <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", flexWrap: "wrap" }}>
         {isHelp ? <Btn variant="success" icon={CheckCircle2} size="sm" onClick={() => onResolve(item, "helped")}>Mark helped</Btn> : (
-          <><Btn variant="success" icon={ThumbsUp} size="sm" onClick={() => onResolve(item, "approved")}>Approve</Btn><Btn variant="danger" icon={ThumbsDown} size="sm" onClick={() => onResolve(item, "returned")}>Send back</Btn></>
+          <><Btn variant="success" icon={ThumbsUp} size="sm" disabled={isResolving} onClick={() => onResolve(item, "approved")}>Approve</Btn><Btn variant="subtle" icon={ThumbsDown} size="sm" disabled={isResolving} onClick={handleReturn}>Return for revision</Btn></>
         )}
       </div>
     </Card>
@@ -287,14 +319,14 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
     }
   };
 
-  const handleResolve = (item: QueueItem, outcome: string) => {
+  const handleResolve = (item: QueueItem, outcome: string, note?: string) => {
     if (!userId) return;
     if (item.type === "Help") {
       resolveHelp.mutate({ flagId: item._helpId!, userId }, {
         onSuccess: () => setClaimedHelpIds(previous => previous.filter(id => id !== item.id)),
       });
     } else {
-      resolveReview.mutate({ reviewId: item._reviewId!, userId, outcome });
+      resolveReview.mutate({ reviewId: item._reviewId!, userId, outcome, note });
     }
   };
 
@@ -360,7 +392,12 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
             <TopBar title="Claimed" subtitle="Items you've claimed — go find the student" right={<Badge tone="brand">{claimedItems.length} claimed</Badge>} />
             {claimedItems.length === 0 ? <Card style={{ padding: "2rem", textAlign: "center", color: "var(--text-muted)" }}>Nothing claimed. Pick something up from the queue.</Card> : (
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(280px,1fr))", gap: "0.85rem" }}>
-                {claimedItems.map(item => <ClaimedCard key={item.id} item={item} onResolve={handleResolve} />)}
+                {claimedItems.map(item => <ClaimedCard
+                  key={item.id}
+                  item={item}
+                  onResolve={handleResolve}
+                  isResolving={item.type !== "Help" && resolveReview.isPending}
+                />)}
               </div>
             )}
           </div>

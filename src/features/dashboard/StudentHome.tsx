@@ -1,8 +1,9 @@
 import { ArrowRight, Hourglass, UserCheck, CheckCircle2, ListChecks, Loader2 } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel } from "../../components/ui";
 import { TopBar } from "../../components/layout";
-import { StageRail } from "../../components/shared";
+import { ReturnedForRevisionPanel, StageRail } from "../../components/shared";
 import type { StageKey } from "../../lib/constants";
+import type { StudentReviewFeedback } from "../../api/client";
 import { ClearanceCard } from "./ClearanceCard";
 import { MasterySummary } from "./MasterySummary";
 import { useAuth } from "../../hooks/useAuth";
@@ -59,8 +60,8 @@ function nextAction(dbState: string): NextAction {
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function StudentHome({ sessionId, caseStage: _caseStage, onOpenCase, onGoToCases }: {
-  sessionId: string; caseStage: StageKey; onOpenCase: () => void; onGoToCases: () => void;
+export function StudentHome({ sessionId, caseStage: _caseStage, reviewFeedback, onOpenCase, onGoToCases }: {
+  sessionId: string; caseStage: StageKey; reviewFeedback: StudentReviewFeedback[]; onOpenCase: () => void; onGoToCases: () => void;
 }) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
@@ -175,6 +176,10 @@ export function StudentHome({ sessionId, caseStage: _caseStage, onOpenCase, onGo
                 <Btn variant="ghost" size="sm" onClick={onOpenCase}>Open</Btn>
               </div>
             </Card>
+
+            {reviewFeedback.map(feedback => (
+              <ReturnedForRevisionPanel key={feedback.id} reviewType={feedback.review_type} note={feedback.note} />
+            ))}
 
             {/* Stage rail */}
             <Card style={{ padding: "1rem 1.25rem" }}>

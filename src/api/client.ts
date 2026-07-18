@@ -77,6 +77,16 @@ export interface DbReview {
   outcome: string | null; note: string | null;
 }
 
+export interface StudentReviewFeedback {
+  id: string;
+  review_type: "implementation" | "prediction";
+  outcome: string | null;
+  note: string | null;
+  requested_at: string;
+  reviewed_at: string | null;
+  prediction_id: string | null;
+}
+
 export interface DbReflection {
   case_progress_id: string; predicted_vs_actual: string; submitted_at: string;
 }
@@ -427,6 +437,40 @@ export async function getLatestApprovedPrediction(progressId: string) {
   return prediction ?? null;
 }
 
+export async function getStudentReviewFeedback(progressId: string): Promise<StudentReviewFeedback[]> {
+  const { data, error } = await supabase
+    .from("reviews")
+    .select(`
+      id, review_type, outcome, note, requested_at, reviewed_at, prediction_id,
+      case_progress!inner(state)
+    `)
+    .eq("case_progress_id", progressId)
+    .neq("case_progress.state", "completed")
+    .order("requested_at", { ascending: false })
+    .order("id", { ascending: false });
+
+  if (error) throw error;
+
+  const newestByType = new Map<string, StudentReviewFeedback>();
+  for (const row of data ?? []) {
+    const reviewType = row.review_type as "implementation" | "prediction";
+    if ((reviewType !== "implementation" && reviewType !== "prediction") || newestByType.has(reviewType)) continue;
+    newestByType.set(reviewType, {
+      id: row.id as string,
+      review_type: reviewType,
+      outcome: row.outcome as string | null,
+      note: row.note as string | null,
+      requested_at: row.requested_at as string,
+      reviewed_at: row.reviewed_at as string | null,
+      prediction_id: row.prediction_id as string | null,
+    });
+  }
+
+  return [...newestByType.values()].filter(review =>
+    review.reviewed_at !== null && review.outcome === "returned"
+  );
+}
+
 // ─── Reviews ─────────────────────────────────────────────
 
 /** Rich review queue item with joined student/case/prediction data */
@@ -667,7 +711,7 @@ export async function resolveReview(reviewId: string, userId: string, outcome: s
       reviewer_id: userId,
       reviewed_at: new Date().toISOString(),
       outcome,
-      note: note || null,
+      note: note?.trim() || null,
     })
     .eq("id", reviewId)
     .select("*, case_progress_id, review_type")

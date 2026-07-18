@@ -193,6 +193,7 @@ export function useAdvanceStage() {
       qc.invalidateQueries({ queryKey: ["student-progress"] });
       qc.invalidateQueries({ queryKey: ["review-queue-enriched"] });
       qc.invalidateQueries({ queryKey: ["queue-health"] });
+      qc.invalidateQueries({ queryKey: ["student-review-feedback"] });
     },
   });
 }
@@ -240,6 +241,15 @@ export function useReviewQueue(sessionId: string) {
   });
 }
 
+export function useStudentReviewFeedback(progressId: string) {
+  return useQuery({
+    queryKey: ["student-review-feedback", progressId],
+    queryFn: () => api.getStudentReviewFeedback(progressId),
+    enabled: !!progressId,
+    refetchInterval: progressId ? 4_000 : false,
+  });
+}
+
 /** Enriched claimed reviews for the current user */
 export function useClaimedReviews(userId: string, sessionId: string) {
   return useQuery({
@@ -274,6 +284,7 @@ export function useResolveReview() {
       qc.invalidateQueries({ queryKey: ["claimed-reviews-enriched"] });
       qc.invalidateQueries({ queryKey: ["student-progress"] });
       qc.invalidateQueries({ queryKey: ["queue-health"] });
+      qc.invalidateQueries({ queryKey: ["student-review-feedback"] });
     },
   });
 }

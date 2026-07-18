@@ -118,7 +118,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
           sim={
             <div style={{ display: "flex", gap: "0.6rem" }}>
               <Btn variant="success" icon={ThumbsUp} onClick={() => setStage("impl_approved")}>Approve</Btn>
-              <Btn variant="danger" icon={ThumbsDown} onClick={() => setStage("building")}>Request changes</Btn>
+              <Btn variant="subtle" icon={ThumbsDown} onClick={() => setStage("building")}>Return for revision</Btn>
             </div>
           }
         />
@@ -185,7 +185,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
               <div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)", marginBottom: "0.75rem" }}>{prediction.because}</div>
               <div style={{ display: "flex", gap: "0.6rem" }}>
                 <Btn variant="success" icon={ThumbsUp} onClick={() => setStage("prediction_approved")}>Approve</Btn>
-                <Btn variant="danger" icon={ThumbsDown} onClick={() => setStage("prediction_submitted")}>Send back</Btn>
+                <Btn variant="subtle" icon={ThumbsDown} onClick={() => setStage("prediction_submitted")}>Return for revision</Btn>
               </div>
             </div>
           }

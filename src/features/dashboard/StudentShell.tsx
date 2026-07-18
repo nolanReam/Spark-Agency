@@ -5,7 +5,7 @@ import { Sidebar } from "../../components/layout";
 import { Card, Btn, Input } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
-import { useStudentProfile, useJoinedLiveSession, useJoinSession, useRaiseHand, useActiveRaiseHand, useLowerHand, useStudentProgress, useCreateCaseProgress } from "../../api/hooks";
+import { useStudentProfile, useJoinedLiveSession, useJoinSession, useRaiseHand, useActiveRaiseHand, useLowerHand, useStudentProgress, useCreateCaseProgress, useStudentReviewFeedback } from "../../api/hooks";
 import { StudentHome } from "./StudentHome";
 import { StudentCases } from "../cases/StudentCases";
 import { StudentProgress } from "../cases/StudentProgress";
@@ -102,6 +102,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
   const activeProgressId = activeProgress?.id ?? "";
   const { data: activeRaiseHand } = useActiveRaiseHand(activeProgressId);
+  const { data: reviewFeedback = [] } = useStudentReviewFeedback(activeProgressId);
   const handRaised = !!activeRaiseHand;
   const handPending = raiseHand.isPending || lowerHand.isPending;
 
@@ -233,7 +234,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
     <>
       <Sidebar items={navItems} view={view} setView={setView} role={role} theme={theme} setTheme={setTheme} bottomContent={bottomContent} onSignOut={onSignOut} />
       <main style={{ flex: 1, padding: "1.75rem 2.25rem", overflow: "auto" }}>
-        {view === "home" && <StudentHome sessionId={joinedSession.id} caseStage={caseStage} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onGoToCases={() => setView("cases")} />}
+        {view === "home" && <StudentHome sessionId={joinedSession.id} caseStage={caseStage} reviewFeedback={reviewFeedback} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onGoToCases={() => setView("cases")} />}
         {view === "cases" && (
           <>
             {startError && (
@@ -245,7 +246,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
             <StudentCases sessionId={joinedSession.id} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onStartCase={handleStartCase} onViewCase={handleViewCase} />
           </>
         )}
-        {view === "case-detail" && <CaseWorkflow sessionId={joinedSession.id} stage={caseStage} setStage={setCaseStage} caseId={workflowCaseId ?? undefined} readOnly={readOnly} onBack={() => { setView("home"); setWorkflowCaseId(null); setReadOnly(false); setStartError(null); }} />}
+        {view === "case-detail" && <CaseWorkflow sessionId={joinedSession.id} stage={caseStage} setStage={setCaseStage} caseId={workflowCaseId ?? undefined} readOnly={readOnly} reviewFeedback={readOnly ? [] : reviewFeedback} onBack={() => { setView("home"); setWorkflowCaseId(null); setReadOnly(false); setStartError(null); }} />}
         {view === "progress" && <StudentProgress />}
       </main>
     </>

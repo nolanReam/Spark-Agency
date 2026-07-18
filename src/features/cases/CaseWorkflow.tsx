@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react";
 import { ArrowLeft, ListChecks, Loader2 } from "lucide-react";
 import { Badge, Card, SectionLabel } from "../../components/ui";
-import { StageRail } from "../../components/shared";
+import { ReturnedForRevisionPanel, StageRail } from "../../components/shared";
 import { CaseDossier } from "./CaseDossier";
 import { StageActionPanel } from "./StageActionPanel";
 import type { StageKey } from "../../lib/constants";
+import type { StudentReviewFeedback } from "../../api/client";
 import { useAuth } from "../../hooks/useAuth";
 import {
   useStudentProgress,
@@ -47,8 +48,8 @@ const STAGE_TO_DB: Record<string, string> = {
 
 // ─── Component ──────────────────────────────────────────────────────
 
-export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _externalSetStage, caseId, readOnly, onBack }: {
-  sessionId: string; stage: StageKey; setStage: (s: StageKey) => void; caseId?: string; readOnly?: boolean; onBack: () => void;
+export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _externalSetStage, caseId, readOnly, reviewFeedback, onBack }: {
+  sessionId: string; stage: StageKey; setStage: (s: StageKey) => void; caseId?: string; readOnly?: boolean; reviewFeedback: StudentReviewFeedback[]; onBack: () => void;
 }) {
   const { user } = useAuth();
   const userId = user?.id ?? "";
@@ -245,6 +246,13 @@ export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _exte
             <SectionLabel icon={ListChecks}>Case progress</SectionLabel>
             <div style={{ marginTop: "0.85rem" }}><StageRail currentKey={stage} /></div>
           </Card>
+          {reviewFeedback.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem", marginBottom: "1.25rem" }}>
+              {reviewFeedback.map(feedback => (
+                <ReturnedForRevisionPanel key={feedback.id} reviewType={feedback.review_type} note={feedback.note} />
+              ))}
+            </div>
+          )}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1.05fr", gap: "1.1rem" }}>
             <CaseDossier caseData={caseData} showTransferHint={showTransferHint} />
             <StageActionPanel
