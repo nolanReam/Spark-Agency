@@ -23,14 +23,22 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   );
 }
 
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
+export function Field({ label, hint, htmlFor, error, errorId, children }: {
+  label: ReactNode;
+  hint?: string;
+  htmlFor?: string;
+  error?: string;
+  errorId?: string;
+  children: ReactNode;
+}) {
   return (
     <div style={{ marginBottom: "1.1rem" }}>
-      <label style={{ display: "block", fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.3rem" }}>
+      <label htmlFor={htmlFor} style={{ display: "block", fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.3rem" }}>
         {label}
       </label>
       {hint && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", margin: "0 0 0.4rem", lineHeight: 1.5 }}>{hint}</p>}
       {children}
+      {error && <p id={errorId} style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.35rem 0 0", lineHeight: 1.4 }}>{error}</p>}
     </div>
   );
 }

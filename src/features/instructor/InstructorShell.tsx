@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, CheckSquare, RotateCcw } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field, ThinBar } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
@@ -180,6 +180,123 @@ interface CaseFormData {
   init_rules: string[];
 }
 
+type PublishField =
+  | "case_code"
+  | "title"
+  | "client_brief"
+  | "mission"
+  | "required_lane"
+  | "extension_lane"
+  | "challenge_lane"
+  | "predict_prove_prompt"
+  | "reflection_prompt"
+  | "estimated_minutes"
+  | "reputation_reward"
+  | "concept_weights";
+
+type PublishValidationErrors = Partial<Record<PublishField, string>>;
+
+const PUBLISH_FIELD_ELEMENT_IDS: Record<PublishField, string> = {
+  case_code: "case-code",
+  title: "case-title",
+  client_brief: "client-brief",
+  mission: "case-mission",
+  required_lane: "lane-required",
+  extension_lane: "lane-extension",
+  challenge_lane: "lane-challenge",
+  predict_prove_prompt: "predict-prove-prompt",
+  reflection_prompt: "reflection-prompt",
+  estimated_minutes: "estimated-minutes",
+  reputation_reward: "reputation-reward",
+  concept_weights: "concept-weight-0",
+};
+
+const FORM_FIELD_TO_PUBLISH_FIELD: Partial<Record<string, PublishField>> = {
+  case_code: "case_code",
+  title: "title",
+  client_brief: "client_brief",
+  mission: "mission",
+  predict_prove_prompt: "predict_prove_prompt",
+  reflection_prompt: "reflection_prompt",
+  estimated_minutes: "estimated_minutes",
+  reputation_reward: "reputation_reward",
+};
+
+function RequirementTag({ required }: { required: boolean }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", flexShrink: 0,
+      padding: "0.15rem 0.4rem", borderRadius: 999,
+      border: "1px solid var(--border)", background: "var(--surface-2)",
+      color: "var(--text-muted)", fontSize: "0.68rem", fontWeight: 600,
+      lineHeight: 1.2, textTransform: "none", letterSpacing: 0,
+    }}>
+      {required ? "Required to publish" : "Optional"}
+    </span>
+  );
+}
+
+function CaseBuilderFieldLabel({ children, required }: { children: ReactNode; required: boolean }) {
+  return (
+    <span style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.35rem 0.5rem", width: "100%", flexWrap: "wrap" }}>
+      <span>{children}</span>
+      <RequirementTag required={required} />
+    </span>
+  );
+}
+
+function CaseBuilderSectionLabel({ children, required, icon }: { children: ReactNode; required: boolean; icon: ElementType }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+      <SectionLabel icon={icon}>{children}</SectionLabel>
+      <RequirementTag required={required} />
+    </div>
+  );
+}
+
+function conceptWeightValidationError(weights: Record<string, number>): string | null {
+  const values = CONCEPTS.map(concept => weights[concept]);
+  if (values.some(value => !Number.isFinite(value) || value < 0 || value > 15)) {
+    return "Each concept weight must be a number between 0 and 15.";
+  }
+  if (!values.some(value => value > 0)) {
+    return "Set at least one concept weight above 0.";
+  }
+  return null;
+}
+
+function validateCaseForPublish(form: CaseFormData): PublishValidationErrors {
+  const errors: PublishValidationErrors = {};
+  const requireText = (field: PublishField, value: string, message: string) => {
+    if (!value.trim()) errors[field] = message;
+  };
+
+  requireText("case_code", form.case_code, "Enter a case code.");
+  requireText("title", form.title, "Enter a case title.");
+  if (!Number.isFinite(form.reputation_reward) || form.reputation_reward < 0) {
+    errors.reputation_reward = "Enter a finite reputation reward of 0 or more.";
+  }
+  if (!Number.isFinite(form.estimated_minutes) || form.estimated_minutes <= 0) {
+    errors.estimated_minutes = "Enter estimated minutes greater than 0.";
+  }
+  requireText("client_brief", form.client_brief, "Enter a client brief.");
+  requireText("mission", form.mission, "Enter a mission.");
+
+  const requiredLane = form.lanes.find(lane => lane.name === "Required");
+  const extensionLane = form.lanes.find(lane => lane.name === "Extension");
+  const challengeLane = form.lanes.find(lane => lane.name === "Challenge");
+  if (!requiredLane?.detail.trim()) errors.required_lane = "Describe the Required lane.";
+  if (extensionLane?.available && !extensionLane.detail.trim()) errors.extension_lane = "Describe the enabled Extension lane.";
+  if (challengeLane?.available && !challengeLane.detail.trim()) errors.challenge_lane = "Describe the enabled Challenge lane.";
+
+  const weightError = conceptWeightValidationError(form.concept_weights);
+  if (weightError) errors.concept_weights = weightError;
+  requireText("predict_prove_prompt", form.predict_prove_prompt, "Enter a Predict & Prove prompt.");
+  requireText("reflection_prompt", form.reflection_prompt, "Enter a reflection prompt.");
+
+  return errors;
+}
+
 function emptyCaseForm(): CaseFormData {
   return {
     case_code: "", title: "", client_brief: "", min_clearance: 1,
@@ -263,28 +380,77 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
   const [form, setForm] = useState<CaseFormData>(emptyCaseForm);
   const [hydrated, setHydrated] = useState(isNew);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [publishErrors, setPublishErrors] = useState<PublishValidationErrors>({});
   const saveInFlight = useRef(false);
   const hydratedCaseId = useRef<string | null>(null);
 
   useEffect(() => {
     if (isNew) {
       setForm(emptyCaseForm());
+      setPublishErrors({});
       setHydrated(true);
       return;
     }
     if (aggregateQuery.data && hydratedCaseId.current !== aggregateQuery.data.case.id) {
       setForm(dbToForm(aggregateQuery.data.case, aggregateQuery.data.lanes, aggregateQuery.data.conceptWeights));
+      setPublishErrors({});
       hydratedCaseId.current = aggregateQuery.data.case.id;
       setHydrated(true);
     }
   }, [aggregateQuery.data, isNew]);
 
-  const set = (k: string, v: unknown) => setForm((f: CaseFormData) => ({ ...f, [k]: v }));
-  const setWeight = (concept: string, v: string) => setForm((f: CaseFormData) => ({ ...f, concept_weights: { ...f.concept_weights, [concept]: parseInt(v) || 0 } }));
-  const setLane = (i: number, key: string, val: unknown) => { const lanes = [...form.lanes]; (lanes[i] as Record<string, unknown>)[key] = val; set("lanes", lanes); };
+  const clearPublishError = (field: PublishField) => {
+    setPublishErrors(current => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
+
+  const set = (k: string, v: unknown) => {
+    setForm((f: CaseFormData) => ({ ...f, [k]: v }));
+    const publishField = FORM_FIELD_TO_PUBLISH_FIELD[k];
+    if (!publishField) return;
+    const valid = publishField === "estimated_minutes"
+      ? Number.isFinite(v) && Number(v) > 0
+      : publishField === "reputation_reward"
+        ? Number.isFinite(v) && Number(v) >= 0
+        : String(v ?? "").trim().length > 0;
+    if (valid) clearPublishError(publishField);
+  };
+
+  const setWeight = (concept: string, v: string) => {
+    const nextWeights = { ...form.concept_weights, [concept]: parseInt(v) || 0 };
+    setForm((f: CaseFormData) => ({ ...f, concept_weights: nextWeights }));
+    if (!conceptWeightValidationError(nextWeights)) clearPublishError("concept_weights");
+  };
+
+  const setLane = (i: number, key: "detail" | "available", val: string | boolean) => {
+    const lane = form.lanes[i];
+    const lanes = form.lanes.map((current, index) => index === i ? { ...current, [key]: val } : current);
+    setForm(current => ({ ...current, lanes }));
+    const publishField = lane.name === "Required"
+      ? "required_lane"
+      : lane.name === "Extension"
+        ? "extension_lane"
+        : "challenge_lane";
+    if ((key === "detail" && String(val).trim()) || (key === "available" && val === false)) {
+      clearPublishError(publishField);
+    }
+  };
+
   const addInitRule = () => set("init_rules", [...form.init_rules, ""]);
   const setInitRule = (i: number, v: string) => { const r = [...form.init_rules]; r[i] = v; set("init_rules", r); };
   const removeInitRule = (i: number) => set("init_rules", form.init_rules.filter((_, idx) => idx !== i));
+
+  const focusPublishField = (field: PublishField) => {
+    requestAnimationFrame(() => {
+      const element = document.getElementById(PUBLISH_FIELD_ELEMENT_IDS[field]);
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
+      element?.focus({ preventScroll: true });
+    });
+  };
 
   const handleSave = (status: "draft" | "published") => {
     if (saveInFlight.current) return;
@@ -297,8 +463,22 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
     });
   };
 
-  const handleSaveDraft = () => handleSave("draft");
-  const handlePublish = () => handleSave("published");
+  const handleSaveDraft = () => {
+    setPublishErrors({});
+    handleSave("draft");
+  };
+
+  const handlePublish = () => {
+    const errors = validateCaseForPublish(form);
+    setPublishErrors(errors);
+    setSaveError(null);
+    const firstInvalidField = Object.keys(errors)[0] as PublishField | undefined;
+    if (firstInvalidField) {
+      focusPublishField(firstInvalidField);
+      return;
+    }
+    handleSave("published");
+  };
 
   if (!isNew && aggregateQuery.isError) {
     return <div><TopBar title="Edit Case" subtitle="Unable to load case data" onBack={onBack} /><Card style={{ padding: "1rem", border: "1px solid var(--danger)", color: "var(--danger)" }}>Case load failed: {aggregateQuery.error.message}</Card></div>;
@@ -311,86 +491,267 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
   return (
     <div>
       <TopBar title={isNew ? "New Case" : "Edit Case"} subtitle={isNew ? "Create a new case file" : `${existing?.case_code ?? ""} — ${existing?.title ?? ""}`} onBack={onBack} />
+      <p style={{ margin: "-0.75rem 0 1rem", color: "var(--text-muted)", fontSize: "0.8rem", lineHeight: 1.5 }}>
+        Drafts can be saved incomplete. Fields marked Required to publish must be completed before publishing.
+      </p>
+      {Object.keys(publishErrors).length > 0 && (
+        <Card role="alert" style={{ padding: "0.75rem 1rem", marginBottom: "1rem", border: "1px solid var(--danger)", background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.85rem" }}>
+          Complete the fields marked Required to publish.
+        </Card>
+      )}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.25rem" }}>
         <div>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
             <SectionLabel icon={FileText}>Case metadata</SectionLabel>
             <div style={{ marginTop: "0.85rem" }}>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
-                <Field label="Case Code"><Input placeholder="L1-06" value={form.case_code} onChange={e => set("case_code", e.target.value)} /></Field>
-                <Field label="Client Brief (short)"><Input placeholder="Client / Organization" value={form.client_brief} onChange={e => set("client_brief", e.target.value)} /></Field>
+                <Field
+                  label={<CaseBuilderFieldLabel required>Case Code</CaseBuilderFieldLabel>}
+                  htmlFor="case-code"
+                  error={publishErrors.case_code}
+                  errorId="case-code-error"
+                >
+                  <Input
+                    id="case-code"
+                    placeholder="L1-06"
+                    value={form.case_code}
+                    aria-required="true"
+                    aria-invalid={!!publishErrors.case_code}
+                    aria-describedby={publishErrors.case_code ? "case-code-error" : undefined}
+                    onChange={e => set("case_code", e.target.value)}
+                  />
+                </Field>
+                <Field
+                  label={<CaseBuilderFieldLabel required>Case Title</CaseBuilderFieldLabel>}
+                  htmlFor="case-title"
+                  error={publishErrors.title}
+                  errorId="case-title-error"
+                >
+                  <Input
+                    id="case-title"
+                    placeholder="Descriptive project title"
+                    value={form.title}
+                    aria-required="true"
+                    aria-invalid={!!publishErrors.title}
+                    aria-describedby={publishErrors.title ? "case-title-error" : undefined}
+                    onChange={e => set("title", e.target.value)}
+                  />
+                </Field>
               </div>
-              <Field label="Case Title"><Input placeholder="Descriptive project title" value={form.title} onChange={e => set("title", e.target.value)} /></Field>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
-                <Field label="Min Clearance">
-                  <select value={form.min_clearance} onChange={e => set("min_clearance", Number(e.target.value))} style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.875rem", fontFamily: "'IBM Plex Sans',sans-serif" }}>
+                <Field label={<CaseBuilderFieldLabel required>Min Clearance</CaseBuilderFieldLabel>} htmlFor="minimum-clearance">
+                  <select id="minimum-clearance" aria-required="true" value={form.min_clearance} onChange={e => set("min_clearance", Number(e.target.value))} style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.875rem", fontFamily: "'IBM Plex Sans',sans-serif" }}>
                     {CLEARANCE_LEVELS.map(l => <option key={l.level} value={l.level}>CL-{l.level} — {l.title}</option>)}
                   </select>
                 </Field>
-                <Field label="Reputation Reward"><Input type="number" min={5} max={100} value={form.reputation_reward} onChange={e => set("reputation_reward", Number(e.target.value))} /></Field>
-                <Field label="Est. Minutes"><Input type="number" min={5} max={120} value={form.estimated_minutes} onChange={e => set("estimated_minutes", Number(e.target.value))} /></Field>
+                <Field
+                  label={<CaseBuilderFieldLabel required>Reputation Reward</CaseBuilderFieldLabel>}
+                  htmlFor="reputation-reward"
+                  error={publishErrors.reputation_reward}
+                  errorId="reputation-reward-error"
+                >
+                  <Input
+                    id="reputation-reward"
+                    type="number"
+                    min={0}
+                    value={form.reputation_reward}
+                    aria-required="true"
+                    aria-invalid={!!publishErrors.reputation_reward}
+                    aria-describedby={publishErrors.reputation_reward ? "reputation-reward-error" : undefined}
+                    onChange={e => set("reputation_reward", Number(e.target.value))}
+                  />
+                </Field>
+                <Field
+                  label={<CaseBuilderFieldLabel required>Estimated Minutes</CaseBuilderFieldLabel>}
+                  htmlFor="estimated-minutes"
+                  error={publishErrors.estimated_minutes}
+                  errorId="estimated-minutes-error"
+                >
+                  <Input
+                    id="estimated-minutes"
+                    type="number"
+                    min={1}
+                    value={form.estimated_minutes}
+                    aria-required="true"
+                    aria-invalid={!!publishErrors.estimated_minutes}
+                    aria-describedby={publishErrors.estimated_minutes ? "estimated-minutes-error" : undefined}
+                    onChange={e => set("estimated_minutes", Number(e.target.value))}
+                  />
+                </Field>
               </div>
             </div>
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
             <SectionLabel icon={FileText}>Client Brief & Mission</SectionLabel>
             <div style={{ marginTop: "0.75rem" }}>
-              <Field label="Client Brief"><Textarea rows={3} value={form.client_brief} placeholder="Describe the client scenario..." onChange={e => set("client_brief", e.target.value)} /></Field>
-              <Field label="Mission"><Textarea rows={2} value={form.mission} placeholder="What the student needs to build..." onChange={e => set("mission", e.target.value)} /></Field>
+              <Field
+                label={<CaseBuilderFieldLabel required>Client Brief</CaseBuilderFieldLabel>}
+                htmlFor="client-brief"
+                error={publishErrors.client_brief}
+                errorId="client-brief-error"
+              >
+                <Textarea
+                  id="client-brief"
+                  rows={3}
+                  value={form.client_brief}
+                  placeholder="Describe the client scenario..."
+                  aria-required="true"
+                  aria-invalid={!!publishErrors.client_brief}
+                  aria-describedby={publishErrors.client_brief ? "client-brief-error" : undefined}
+                  onChange={e => set("client_brief", e.target.value)}
+                />
+              </Field>
+              <Field
+                label={<CaseBuilderFieldLabel required>Mission</CaseBuilderFieldLabel>}
+                htmlFor="case-mission"
+                error={publishErrors.mission}
+                errorId="case-mission-error"
+              >
+                <Textarea
+                  id="case-mission"
+                  rows={2}
+                  value={form.mission}
+                  placeholder="What the student needs to build..."
+                  aria-required="true"
+                  aria-invalid={!!publishErrors.mission}
+                  aria-describedby={publishErrors.mission ? "case-mission-error" : undefined}
+                  onChange={e => set("mission", e.target.value)}
+                />
+              </Field>
             </div>
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
             <SectionLabel icon={Target}>Difficulty lanes</SectionLabel>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.4rem 0 0.75rem" }}>Required is always on. Extension and Challenge are optional add-ons.</p>
-            {form.lanes.map((lane, i) => (
-              <div key={lane.name} style={{ padding: "0.85rem", borderRadius: "10px", background: "var(--surface-2)", marginBottom: "0.5rem", opacity: !lane.available && lane.name !== "Required" ? 0.6 : 1 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                  <Badge tone={lane.name === "Required" ? "brand" : lane.name === "Extension" ? "accent" : "danger"}>{lane.name}</Badge>
-                  {lane.name !== "Required" && <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}><input type="checkbox" checked={lane.available} onChange={e => setLane(i, "available", e.target.checked)} />Available</label>}
+            {form.lanes.map((lane, i) => {
+              const requiredToPublish = lane.name === "Required" || lane.available;
+              const publishField: PublishField = lane.name === "Required"
+                ? "required_lane"
+                : lane.name === "Extension"
+                  ? "extension_lane"
+                  : "challenge_lane";
+              const fieldId = PUBLISH_FIELD_ELEMENT_IDS[publishField];
+              const fieldError = publishErrors[publishField];
+              return (
+                <div key={lane.name} style={{ padding: "0.85rem", borderRadius: "10px", background: "var(--surface-2)", marginBottom: "0.5rem", opacity: !lane.available && lane.name !== "Required" ? 0.6 : 1 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.45rem", flexWrap: "wrap" }}>
+                      <Badge tone={lane.name === "Required" ? "brand" : lane.name === "Extension" ? "accent" : "danger"}>{lane.name}</Badge>
+                      <RequirementTag required={requiredToPublish} />
+                    </div>
+                    {lane.name !== "Required" && (
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", cursor: "pointer" }}>
+                        <input type="checkbox" checked={lane.available} onChange={e => setLane(i, "available", e.target.checked)} />
+                        Available
+                      </label>
+                    )}
+                  </div>
+                  <Textarea
+                    id={fieldId}
+                    rows={2}
+                    value={lane.detail}
+                    disabled={!requiredToPublish}
+                    placeholder={`Describe the ${lane.name} lane requirements...`}
+                    aria-label={`${lane.name} lane description`}
+                    aria-required={requiredToPublish}
+                    aria-invalid={!!fieldError}
+                    aria-describedby={fieldError ? `${fieldId}-error` : undefined}
+                    onChange={e => setLane(i, "detail", e.target.value)}
+                  />
+                  {fieldError && <p id={`${fieldId}-error`} style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.35rem 0 0", lineHeight: 1.4 }}>{fieldError}</p>}
                 </div>
-                <Textarea rows={2} value={lane.detail} placeholder={`Describe the ${lane.name} lane requirements...`} onChange={e => setLane(i, "detail", e.target.value)} />
-              </div>
-            ))}
+              );
+            })}
           </Card>
           <Card style={{ padding: "1.25rem" }}>
-            <SectionLabel icon={Wrench}>Tools allowed</SectionLabel>
-            <div style={{ marginTop: "0.75rem" }}><Input placeholder="repeat, variables, operators (+, <), say block" value={form.tools_allowed} onChange={e => set("tools_allowed", e.target.value)} /></div>
+            <CaseBuilderSectionLabel icon={Wrench} required={false}>Tools allowed</CaseBuilderSectionLabel>
+            <div style={{ marginTop: "0.75rem" }}>
+              <Input aria-label="Tools allowed (Optional)" placeholder="repeat, variables, operators (+, <), say block" value={form.tools_allowed} onChange={e => set("tools_allowed", e.target.value)} />
+            </div>
           </Card>
         </div>
         <div>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
-            <SectionLabel icon={ListChecks}>Initialization rules</SectionLabel>
+            <CaseBuilderSectionLabel icon={ListChecks} required={false}>Initialization rules</CaseBuilderSectionLabel>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.4rem 0 0.75rem" }}>Exact starting conditions the volunteer checks during Implementation Review.</p>
             {form.init_rules.map((rule, i) => (
               <div key={i} style={{ display: "flex", gap: "0.4rem", alignItems: "center", marginBottom: "0.4rem" }}>
-                <Input value={rule} placeholder={`Rule ${i + 1}...`} onChange={e => setInitRule(i, e.target.value)} style={{ flex: 1 }} />
-                {form.init_rules.length > 1 && <button onClick={() => removeInitRule(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.3rem" }}><X size={14} /></button>}
+                <Input aria-label={`Initialization rule ${i + 1} (Optional)`} value={rule} placeholder={`Rule ${i + 1}...`} onChange={e => setInitRule(i, e.target.value)} style={{ flex: 1 }} />
+                {form.init_rules.length > 1 && (
+                  <button type="button" className="btn-core" aria-label={`Remove initialization rule ${i + 1}`} title="Remove rule" onClick={() => removeInitRule(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "0.3rem" }}>
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                )}
               </div>
             ))}
             <Btn variant="ghost" size="sm" icon={Plus} onClick={addInitRule}>Add rule</Btn>
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
-            <SectionLabel icon={TrendingUp}>Concept weights</SectionLabel>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem 0.75rem", marginTop: "0.75rem" }}>
-              {CONCEPTS.map(concept => (
+            <CaseBuilderSectionLabel icon={TrendingUp} required>Concept weights</CaseBuilderSectionLabel>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.4rem 0 0.75rem" }}>Use values from 0 to 15. At least one concept must be above 0 to publish.</p>
+            <div
+              role="group"
+              aria-label="Concept weights"
+              aria-describedby={publishErrors.concept_weights ? "concept-weights-error" : undefined}
+              style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.4rem 0.75rem" }}
+            >
+              {CONCEPTS.map((concept, index) => (
                 <div key={concept} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-                  <label style={{ fontSize: "0.82rem" }}>{concept}</label>
-                  <input type="number" min={0} max={15} value={form.concept_weights[concept]} onChange={e => setWeight(concept, e.target.value)} style={{ width: 52, padding: "0.35rem 0.5rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.82rem", fontFamily: "'IBM Plex Sans',sans-serif", textAlign: "right" }} />
+                  <label htmlFor={`concept-weight-${index}`} style={{ fontSize: "0.82rem" }}>{concept}</label>
+                  <input
+                    id={`concept-weight-${index}`}
+                    type="number"
+                    min={0}
+                    max={15}
+                    value={form.concept_weights[concept]}
+                    aria-invalid={!!publishErrors.concept_weights}
+                    onChange={e => setWeight(concept, e.target.value)}
+                    style={{ width: 52, padding: "0.35rem 0.5rem", borderRadius: "6px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.82rem", fontFamily: "'IBM Plex Sans',sans-serif", textAlign: "right" }}
+                  />
                 </div>
               ))}
             </div>
+            {publishErrors.concept_weights && <p id="concept-weights-error" style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.5rem 0 0", lineHeight: 1.4 }}>{publishErrors.concept_weights}</p>}
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
-            <SectionLabel icon={Lock}>Predict & Prove prompt</SectionLabel>
-            <div style={{ marginTop: "0.75rem" }}><Textarea rows={3} value={form.predict_prove_prompt} placeholder="What will your project output / do?" onChange={e => set("predict_prove_prompt", e.target.value)} /></div>
+            <CaseBuilderSectionLabel icon={Lock} required>Predict & Prove prompt</CaseBuilderSectionLabel>
+            <div style={{ marginTop: "0.75rem" }}>
+              <Textarea
+                id="predict-prove-prompt"
+                rows={3}
+                value={form.predict_prove_prompt}
+                placeholder="What will your project output / do?"
+                aria-label="Predict & Prove prompt"
+                aria-required="true"
+                aria-invalid={!!publishErrors.predict_prove_prompt}
+                aria-describedby={publishErrors.predict_prove_prompt ? "predict-prove-prompt-error" : undefined}
+                onChange={e => set("predict_prove_prompt", e.target.value)}
+              />
+              {publishErrors.predict_prove_prompt && <p id="predict-prove-prompt-error" style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.35rem 0 0", lineHeight: 1.4 }}>{publishErrors.predict_prove_prompt}</p>}
+            </div>
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1rem" }}>
-            <SectionLabel icon={Lightbulb}>Reflection prompt</SectionLabel>
-            <div style={{ marginTop: "0.75rem" }}><Textarea rows={2} value={form.reflection_prompt} placeholder="What actually happened?" onChange={e => set("reflection_prompt", e.target.value)} /></div>
+            <CaseBuilderSectionLabel icon={Lightbulb} required>Reflection prompt</CaseBuilderSectionLabel>
+            <div style={{ marginTop: "0.75rem" }}>
+              <Textarea
+                id="reflection-prompt"
+                rows={2}
+                value={form.reflection_prompt}
+                placeholder="What actually happened?"
+                aria-label="Reflection prompt"
+                aria-required="true"
+                aria-invalid={!!publishErrors.reflection_prompt}
+                aria-describedby={publishErrors.reflection_prompt ? "reflection-prompt-error" : undefined}
+                onChange={e => set("reflection_prompt", e.target.value)}
+              />
+              {publishErrors.reflection_prompt && <p id="reflection-prompt-error" style={{ fontSize: "0.75rem", color: "var(--danger)", margin: "0.35rem 0 0", lineHeight: 1.4 }}>{publishErrors.reflection_prompt}</p>}
+            </div>
           </Card>
           <Card style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
-            <SectionLabel icon={ArrowRight}>Transfer hint</SectionLabel>
-            <Textarea rows={2} value={form.transfer_hint} placeholder="This pattern appears in real software when..." onChange={e => set("transfer_hint", e.target.value)} />
+            <CaseBuilderSectionLabel icon={ArrowRight} required={false}>Transfer hint</CaseBuilderSectionLabel>
+            <div style={{ marginTop: "0.75rem" }}>
+              <Textarea aria-label="Transfer hint (Optional)" rows={2} value={form.transfer_hint} placeholder="This pattern appears in real software when..." onChange={e => set("transfer_hint", e.target.value)} />
+            </div>
           </Card>
           {saveError && <Card style={{ padding: "0.75rem 1rem", marginBottom: "0.75rem", border: "1px solid var(--danger)", background: "var(--danger-soft)", color: "var(--danger)", fontSize: "0.85rem" }}>{saveError}</Card>}
           <div style={{ display: "flex", gap: "0.6rem", justifyContent: "flex-end" }}>
