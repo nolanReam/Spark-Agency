@@ -6,10 +6,14 @@ import { StudentShell } from "./features/dashboard/StudentShell";
 import { VolunteerShell } from "./features/review/VolunteerShell";
 import { InstructorShell } from "./features/instructor/InstructorShell";
 import { FloatingThemeToggle } from "./components/layout/ThemeToggle";
+import { StudentSignupScreen } from "./features/auth/StudentSignupScreen";
 
 const queryClient = new QueryClient();
 
-function LoginScreen({ onSignIn }: { onSignIn: (username: string, password: string) => Promise<{ error?: Error | null }> }) {
+function LoginScreen({ onSignIn, onCreateStudentAccount }: {
+  onSignIn: (username: string, password: string) => Promise<{ error?: Error | null }>;
+  onCreateStudentAccount: () => void;
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -111,6 +115,14 @@ function LoginScreen({ onSignIn }: { onSignIn: (username: string, password: stri
             {submitting ? "Signing in..." : "Sign in"}
           </button>
 
+          <button type="button" onClick={onCreateStudentAccount} disabled={submitting} className="btn-core" style={{
+            padding: "0.7rem 1.25rem", borderRadius: "10px", border: "1px solid var(--border)",
+            background: "transparent", color: "var(--text)", fontWeight: 600, fontSize: "0.88rem",
+            fontFamily: "'IBM Plex Sans',sans-serif",
+          }}>
+            Create Student Account
+          </button>
+
           <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", textAlign: "center" }}>
             Demo accounts &mdash; username: <strong>student1</strong>, password: <strong>demo1234</strong>
           </div>
@@ -123,9 +135,12 @@ function LoginScreen({ onSignIn }: { onSignIn: (username: string, password: stri
 export default function App() {
   const { theme, toggleTheme } = useTheme();
   const { session, role, signIn, signOut } = useAuth();
+  const [authScreen, setAuthScreen] = useState<"sign-in" | "student-signup">("sign-in");
 
   if (!session) {
-    return <LoginScreen onSignIn={signIn} />;
+    return authScreen === "student-signup"
+      ? <StudentSignupScreen onBack={() => setAuthScreen("sign-in")} onSignIn={signIn} />
+      : <LoginScreen onSignIn={signIn} onCreateStudentAccount={() => setAuthScreen("student-signup")} />;
   }
 
   const roleProps = { role, theme, setTheme: toggleTheme, onSignOut: signOut };

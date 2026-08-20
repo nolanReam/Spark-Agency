@@ -1,0 +1,2 @@
+[functions.signup-student]
+verify_jwt = false

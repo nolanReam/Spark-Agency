@@ -1,9 +1,67 @@
-import { createClient } from "@supabase/supabase-js";
+import { createClient, FunctionsHttpError } from "@supabase/supabase-js";
 
 const supabaseUrl = "https://oxiximaftgrpipqbrwej.supabase.co";
 const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im94aXhpbWFmdGdycGlwcWJyd2VqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2Mzc5ODUsImV4cCI6MjA5NzIxMzk4NX0.agyl0Ge416zGP3ZDV74rm9AazlON8s3T74tHrZJMWGQ";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+
+export type StudentSignupErrorCode =
+  | "INVALID_REQUEST"
+  | "INVALID_USERNAME"
+  | "PASSWORD_TOO_SHORT"
+  | "PASSWORD_REJECTED"
+  | "USERNAME_TAKEN"
+  | "SIGNUP_UNAVAILABLE";
+
+const studentSignupMessages: Record<StudentSignupErrorCode, string> = {
+  INVALID_REQUEST: "The signup request was not valid.",
+  INVALID_USERNAME: "Use 3–32 letters, numbers, underscores, or hyphens. Start and end with a letter or number.",
+  PASSWORD_TOO_SHORT: "Password must be at least 8 characters.",
+  PASSWORD_REJECTED: "That password was not accepted. Choose a different password and try again.",
+  USERNAME_TAKEN: "That username is already taken.",
+  SIGNUP_UNAVAILABLE: "Student signup is temporarily unavailable. Please try again later.",
+};
+
+export class StudentSignupError extends Error {
+  readonly code: StudentSignupErrorCode;
+
+  constructor(code: StudentSignupErrorCode) {
+    super(studentSignupMessages[code]);
+    this.code = code;
+    this.name = "StudentSignupError";
+  }
+}
+
+function isStudentSignupErrorCode(value: unknown): value is StudentSignupErrorCode {
+  return typeof value === "string" && value in studentSignupMessages;
+}
+
+export async function signupStudent(username: string, password: string): Promise<void> {
+  const { data, error } = await supabase.functions.invoke<{ ok?: boolean; code?: unknown }>(
+    "signup-student",
+    { body: { username, password } },
+  );
+
+  if (error) {
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const payload = await error.context.json() as { code?: unknown };
+        if (isStudentSignupErrorCode(payload.code)) {
+          throw new StudentSignupError(payload.code);
+        }
+      } catch (responseError) {
+        if (responseError instanceof StudentSignupError) throw responseError;
+      }
+    }
+    throw new StudentSignupError("SIGNUP_UNAVAILABLE");
+  }
+
+  if (!data?.ok) {
+    throw new StudentSignupError(
+      isStudentSignupErrorCode(data?.code) ? data.code : "SIGNUP_UNAVAILABLE",
+    );
+  }
+}
 
 // ─── Types ───────────────────────────────────────────────
 

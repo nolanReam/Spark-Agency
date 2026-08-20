@@ -1,6 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
 import { supabase } from "../api/client";
 import type { Session, User } from "@supabase/supabase-js";
+import {
+  canonicalizeStudentUsername,
+  getStudentAuthConfigurationError,
+  getStudentAuthEmail,
+} from "../lib/studentAuth";
 
 export type UserRole = "student" | "volunteer" | "instructor" | "admin";
 
@@ -38,14 +43,31 @@ export function useAuth() {
   }, []);
 
   const signIn = useCallback(async (username: string, password: string) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: `${username}@sparkagency.internal`,
+    const canonicalUsername = canonicalizeStudentUsername(username);
+    const configuredEmail = getStudentAuthEmail(canonicalUsername);
+    if (!configuredEmail) {
+      return {
+        data: { user: null, session: null },
+        error: new Error(getStudentAuthConfigurationError() ?? "Student account access is temporarily unavailable."),
+      };
+    }
+
+    let result = await supabase.auth.signInWithPassword({
+      email: configuredEmail,
       password,
     });
-    if (data?.session) {
-      setRole(roleFromSession(data.session));
+
+    if (result.error?.code === "invalid_credentials") {
+      result = await supabase.auth.signInWithPassword({
+        email: `${canonicalUsername}@sparkagency.internal`,
+        password,
+      });
     }
-    return { data, error };
+
+    if (result.data?.session) {
+      setRole(roleFromSession(result.data.session));
+    }
+    return result;
   }, []);
 
   const signOut = useCallback(async () => {
@@ -55,5 +77,15 @@ export function useAuth() {
     setRole("student");
   }, []);
 
-  return { session, user, role, setRole, loading, signIn, signOut, isAuthenticated: !!user };
+  return {
+    session,
+    user,
+    role,
+    setRole,
+    loading,
+    signIn,
+    signOut,
+    isAuthenticated: !!user,
+    studentAuthConfigurationError: getStudentAuthConfigurationError(),
+  };
 }
