@@ -69,16 +69,23 @@ END $$;
 
 CREATE TABLE IF NOT EXISTS users (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  username        TEXT UNIQUE NOT NULL,
+  username        TEXT UNIQUE NOT NULL
+                  CHECK (
+                    username = lower(btrim(username))
+                    AND username ~ '^[a-z0-9][a-z0-9_-]{1,30}[a-z0-9]$'
+                  ),
   role            user_role NOT NULL,
   display_name    TEXT NOT NULL,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_canonical_key
+  ON users (lower(username));
+
 CREATE TABLE IF NOT EXISTS student_profiles (
   user_id              UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  grade                SMALLINT NOT NULL CHECK (grade BETWEEN 3 AND 6),
+  grade                SMALLINT CHECK (grade BETWEEN 3 AND 6),
   age                  SMALLINT,
   interests            TEXT[] DEFAULT '{}',
   clearance_level      SMALLINT NOT NULL DEFAULT 1,
@@ -308,16 +315,36 @@ CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = 'public'
+SET search_path = ''
 AS $$
 DECLARE
   v_username TEXT;
   v_role public.user_role;
+  v_trusted_role TEXT;
   v_display_name TEXT;
 BEGIN
-  v_username := COALESCE(NEW.raw_user_meta_data->>'username', SPLIT_PART(NEW.email, '@', 1));
-  v_role := (COALESCE(NEW.raw_user_meta_data->>'role', 'student'))::public.user_role;
-  v_display_name := COALESCE(NEW.raw_user_meta_data->>'display_name', v_username);
+  v_username := lower(btrim(COALESCE(
+    NULLIF(NEW.raw_user_meta_data->>'username', ''),
+    split_part(COALESCE(NEW.email, ''), '@', 1)
+  )));
+
+  IF v_username IS NULL
+    OR v_username !~ '^[a-z0-9][a-z0-9_-]{1,30}[a-z0-9]$'
+  THEN
+    RAISE EXCEPTION 'Invalid username metadata for Auth user';
+  END IF;
+
+  v_trusted_role := NEW.raw_app_meta_data->>'role';
+  v_role := CASE
+    WHEN v_trusted_role IN ('student', 'volunteer', 'instructor')
+      THEN v_trusted_role::public.user_role
+    ELSE 'student'::public.user_role
+  END;
+
+  v_display_name := COALESCE(
+    NULLIF(btrim(NEW.raw_user_meta_data->>'display_name'), ''),
+    v_username
+  );
 
   INSERT INTO public.users (id, username, role, display_name)
   VALUES (NEW.id, v_username, v_role, v_display_name)
@@ -327,9 +354,9 @@ BEGIN
     display_name = EXCLUDED.display_name,
     updated_at = now();
 
-  IF v_role = 'student' THEN
-    INSERT INTO public.student_profiles (user_id, grade, age, clearance_level)
-    VALUES (NEW.id, 4, 9, 1)
+  IF v_role = 'student'::public.user_role THEN
+    INSERT INTO public.student_profiles (user_id, clearance_level)
+    VALUES (NEW.id, 1)
     ON CONFLICT (user_id) DO NOTHING;
   END IF;
 
@@ -337,9 +364,12 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION public.handle_new_auth_user()
+  FROM PUBLIC, anon, authenticated;
+
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
-  AFTER INSERT OR UPDATE ON auth.users
+  AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
 -- ============================================================
@@ -651,11 +681,7 @@ DROP POLICY IF EXISTS "users_read_own" ON users;
 CREATE POLICY "users_read_own" ON users FOR SELECT
   USING (auth.uid() = id OR is_volunteer_or_instructor());
 DROP POLICY IF EXISTS "users_update_own" ON users;
-CREATE POLICY "users_update_own" ON users FOR UPDATE
-  USING (auth.uid() = id) WITH CHECK (auth.uid() = id);
 DROP POLICY IF EXISTS "users_insert_auth" ON users;
-CREATE POLICY "users_insert_auth" ON users FOR INSERT
-  WITH CHECK (auth.uid() = id);
 
 -- student_profiles
 DROP POLICY IF EXISTS "profiles_read_own" ON student_profiles;
@@ -839,6 +865,10 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role
 GRANT INSERT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 GRANT UPDATE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 GRANT DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+
+-- public.users is provisioned by the Auth trigger. Browser clients may read
+-- authorized rows but cannot create profiles or change roles/usernames.
+REVOKE INSERT, UPDATE ON TABLE public.users FROM authenticated;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT ON TABLES TO anon, authenticated, service_role;

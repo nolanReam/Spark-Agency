@@ -13,7 +13,7 @@ export interface DbUser {
 }
 
 export interface DbStudentProfile {
-  user_id: string; grade: number; age: number | null; interests: string[];
+  user_id: string; grade: number | null; age: number | null; interests: string[];
   clearance_level: number; reputation_points: number; prediction_accuracy: number;
   guardian_contact: string | null;
 }
