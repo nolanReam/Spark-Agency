@@ -5,6 +5,7 @@ import {
   canonicalizeStudentUsername,
   getStudentAuthConfigurationError,
   getStudentAuthEmail,
+  STUDENT_USERNAME_PATTERN,
 } from "../lib/studentAuth";
 
 export type UserRole = "student" | "volunteer" | "instructor" | "admin";
@@ -70,6 +71,28 @@ export function useAuth() {
     return result;
   }, []);
 
+  const signInStaff = useCallback(async (emailOrLegacyUsername: string, password: string) => {
+    const identifier = emailOrLegacyUsername.trim().toLowerCase();
+    const email = identifier.includes("@")
+      ? identifier
+      : STUDENT_USERNAME_PATTERN.test(identifier)
+        ? `${identifier}@sparkagency.internal`
+        : null;
+
+    if (!email) {
+      return {
+        data: { user: null, session: null },
+        error: new Error("Invalid email or password."),
+      };
+    }
+
+    const result = await supabase.auth.signInWithPassword({ email, password });
+    if (result.data?.session) {
+      setRole(roleFromSession(result.data.session));
+    }
+    return result;
+  }, []);
+
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
     setSession(null);
@@ -84,6 +107,7 @@ export function useAuth() {
     setRole,
     loading,
     signIn,
+    signInStaff,
     signOut,
     isAuthenticated: !!user,
     studentAuthConfigurationError: getStudentAuthConfigurationError(),

@@ -7,27 +7,49 @@ import { VolunteerShell } from "./features/review/VolunteerShell";
 import { InstructorShell } from "./features/instructor/InstructorShell";
 import { FloatingThemeToggle } from "./components/layout/ThemeToggle";
 import { StudentSignupScreen } from "./features/auth/StudentSignupScreen";
+import { StaffSignupScreen } from "./features/auth/StaffSignupScreen";
 
 const queryClient = new QueryClient();
 
-function LoginScreen({ onSignIn, onCreateStudentAccount }: {
-  onSignIn: (username: string, password: string) => Promise<{ error?: Error | null }>;
+type LoginMode = "student" | "staff";
+type AuthScreen = "sign-in" | "student-signup" | "volunteer-signup" | "instructor-signup";
+type SignInResult = Promise<{
+  data?: { session?: unknown | null };
+  error?: Error | null;
+}>;
+
+function LoginScreen({
+  mode,
+  onModeChange,
+  onStudentSignIn,
+  onStaffSignIn,
+  onCreateStudentAccount,
+  onCreateVolunteerAccount,
+  onCreateInstructorAccount,
+}: {
+  mode: LoginMode;
+  onModeChange: (mode: LoginMode) => void;
+  onStudentSignIn: (username: string, password: string) => SignInResult;
+  onStaffSignIn: (email: string, password: string) => SignInResult;
   onCreateStudentAccount: () => void;
+  onCreateVolunteerAccount: () => void;
+  onCreateInstructorAccount: () => void;
 }) {
-  const [username, setUsername] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) return;
+    if (!identifier.trim() || !password.trim()) return;
     setError("");
     setSubmitting(true);
     try {
-      const { error: authError } = await onSignIn(username.trim(), password);
+      const signIn = mode === "student" ? onStudentSignIn : onStaffSignIn;
+      const { error: authError } = await signIn(identifier.trim(), password);
       if (authError) {
-        setError(authError.message || "Invalid username or password");
+        setError(mode === "student" ? "Invalid username or password." : "Invalid email or password.");
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -53,17 +75,48 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
           Sign in to your workshop account
         </div>
 
+        <div role="group" aria-label="Account type" style={{
+          display: "grid", gridTemplateColumns: "1fr 1fr", padding: "0.2rem",
+          borderRadius: "10px", background: "var(--surface-2)", marginBottom: "1rem",
+        }}>
+          {(["student", "staff"] as const).map(option => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={mode === option}
+              onClick={() => {
+                onModeChange(option);
+                setIdentifier("");
+                setPassword("");
+                setError("");
+              }}
+              style={{
+                padding: "0.55rem", borderRadius: "8px", border: "none",
+                background: mode === option ? "var(--surface)" : "transparent",
+                color: "var(--text)", fontWeight: 700, fontSize: "0.82rem",
+                boxShadow: mode === option ? "0 1px 4px rgba(0,0,0,0.08)" : "none",
+              }}
+            >
+              {option === "student" ? "Student" : "Staff"}
+            </button>
+          ))}
+        </div>
+
         <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
           <div>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text)", marginBottom: "0.35rem" }}>
-              Username
+            <label htmlFor="login-identifier" style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text)", marginBottom: "0.35rem" }}>
+              {mode === "student" ? "Username" : "Email"}
             </label>
             <input
+              id="login-identifier"
               type="text"
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              placeholder="student1"
-              autoComplete="username"
+              inputMode={mode === "staff" ? "email" : undefined}
+              value={identifier}
+              onChange={e => setIdentifier(e.target.value)}
+              placeholder={mode === "student" ? "student1" : "staff@example.com"}
+              autoComplete={mode === "student" ? "username" : "email"}
+              autoCapitalize="none"
+              spellCheck={false}
               autoFocus
               style={{
                 width: "100%", padding: "0.65rem 0.85rem", borderRadius: "10px",
@@ -73,12 +126,18 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
                 boxSizing: "border-box",
               }}
             />
+            {mode === "staff" && (
+              <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                Legacy workshop staff may enter their existing username.
+              </div>
+            )}
           </div>
           <div>
-            <label style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text)", marginBottom: "0.35rem" }}>
+            <label htmlFor="login-password" style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--text)", marginBottom: "0.35rem" }}>
               Password
             </label>
             <input
+              id="login-password"
               type="password"
               value={password}
               onChange={e => setPassword(e.target.value)}
@@ -95,7 +154,7 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
           </div>
 
           {error && (
-            <div style={{
+            <div role="alert" aria-live="polite" style={{
               fontSize: "0.82rem", color: "var(--danger)", padding: "0.55rem 0.75rem",
               borderRadius: "8px", background: "var(--danger-soft)", border: "1px solid var(--danger)",
             }}>
@@ -103,7 +162,7 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
             </div>
           )}
 
-          <button type="submit" disabled={submitting || !username.trim() || !password.trim()} style={{
+          <button type="submit" disabled={submitting || !identifier.trim() || !password.trim()} style={{
             padding: "0.75rem 1.25rem", borderRadius: "10px", border: "none",
             background: "var(--brand)", color: "#fff", fontWeight: 600, fontSize: "0.92rem",
             cursor: submitting ? "not-allowed" : "pointer",
@@ -123,6 +182,22 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
             Create Student Account
           </button>
 
+          <button type="button" onClick={onCreateVolunteerAccount} disabled={submitting} className="btn-core" style={{
+            padding: "0.7rem 1.25rem", borderRadius: "10px", border: "1px solid var(--border)",
+            background: "transparent", color: "var(--text)", fontWeight: 600, fontSize: "0.88rem",
+            fontFamily: "'IBM Plex Sans',sans-serif",
+          }}>
+            Create Volunteer Account
+          </button>
+
+          <button type="button" onClick={onCreateInstructorAccount} disabled={submitting} className="btn-core" style={{
+            padding: "0.7rem 1.25rem", borderRadius: "10px", border: "1px solid var(--border)",
+            background: "transparent", color: "var(--text)", fontWeight: 600, fontSize: "0.88rem",
+            fontFamily: "'IBM Plex Sans',sans-serif",
+          }}>
+            Create Instructor Account
+          </button>
+
           <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", textAlign: "center" }}>
             Demo accounts &mdash; username: <strong>student1</strong>, password: <strong>demo1234</strong>
           </div>
@@ -134,13 +209,40 @@ function LoginScreen({ onSignIn, onCreateStudentAccount }: {
 
 export default function App() {
   const { theme, toggleTheme } = useTheme();
-  const { session, role, signIn, signOut } = useAuth();
-  const [authScreen, setAuthScreen] = useState<"sign-in" | "student-signup">("sign-in");
+  const { session, role, signIn, signInStaff, signOut } = useAuth();
+  const [authScreen, setAuthScreen] = useState<AuthScreen>("sign-in");
+  const [loginMode, setLoginMode] = useState<LoginMode>("student");
+
+  const showSignIn = (mode: LoginMode) => {
+    setLoginMode(mode);
+    setAuthScreen("sign-in");
+  };
 
   if (!session) {
-    return authScreen === "student-signup"
-      ? <StudentSignupScreen onBack={() => setAuthScreen("sign-in")} onSignIn={signIn} />
-      : <LoginScreen onSignIn={signIn} onCreateStudentAccount={() => setAuthScreen("student-signup")} />;
+    if (authScreen === "student-signup") {
+      return <StudentSignupScreen onBack={() => showSignIn("student")} onSignIn={signIn} />;
+    }
+    if (authScreen === "volunteer-signup" || authScreen === "instructor-signup") {
+      const staffRole = authScreen === "volunteer-signup" ? "volunteer" : "instructor";
+      return (
+        <StaffSignupScreen
+          role={staffRole}
+          onBack={() => showSignIn("staff")}
+          onStaffSignIn={signInStaff}
+        />
+      );
+    }
+    return (
+      <LoginScreen
+        mode={loginMode}
+        onModeChange={setLoginMode}
+        onStudentSignIn={signIn}
+        onStaffSignIn={signInStaff}
+        onCreateStudentAccount={() => setAuthScreen("student-signup")}
+        onCreateVolunteerAccount={() => setAuthScreen("volunteer-signup")}
+        onCreateInstructorAccount={() => setAuthScreen("instructor-signup")}
+      />
+    );
   }
 
   const roleProps = { role, theme, setTheme: toggleTheme, onSignOut: signOut };

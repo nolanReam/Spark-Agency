@@ -1,2 +1,8 @@
 [functions.signup-student]
 verify_jwt = false
+
+[functions.signup-volunteer]
+verify_jwt = false
+
+[functions.signup-instructor]
+verify_jwt = false

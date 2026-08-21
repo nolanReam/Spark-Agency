@@ -63,6 +63,84 @@ export async function signupStudent(username: string, password: string): Promise
   }
 }
 
+export type StaffSignupRole = "volunteer" | "instructor";
+export type StaffSignupErrorCode =
+  | "INVALID_REQUEST"
+  | "INVALID_ACCESS_CODE"
+  | "INVALID_NAME"
+  | "INVALID_EMAIL"
+  | "PASSWORD_TOO_SHORT"
+  | "PASSWORD_REJECTED"
+  | "ACCOUNT_EXISTS"
+  | "SIGNUP_UNAVAILABLE";
+
+const staffSignupMessages: Record<StaffSignupErrorCode, string> = {
+  INVALID_REQUEST: "The signup request was not valid.",
+  INVALID_ACCESS_CODE: "Invalid access code.",
+  INVALID_NAME: "Enter a name between 2 and 80 characters.",
+  INVALID_EMAIL: "Enter a valid email address.",
+  PASSWORD_TOO_SHORT: "Password must be at least 8 characters.",
+  PASSWORD_REJECTED: "That password was not accepted. Choose a different password and try again.",
+  ACCOUNT_EXISTS: "Unable to create this account. If you already registered, try signing in.",
+  SIGNUP_UNAVAILABLE: "Account signup is temporarily unavailable. Please try again later.",
+};
+
+export class StaffSignupError extends Error {
+  readonly code: StaffSignupErrorCode;
+
+  constructor(code: StaffSignupErrorCode) {
+    super(staffSignupMessages[code]);
+    this.code = code;
+    this.name = "StaffSignupError";
+  }
+}
+
+function isStaffSignupErrorCode(value: unknown): value is StaffSignupErrorCode {
+  return typeof value === "string" && value in staffSignupMessages;
+}
+
+async function invokeStaffSignup(
+  role: StaffSignupRole,
+  body: Record<string, string>,
+): Promise<void> {
+  const functionName = role === "volunteer" ? "signup-volunteer" : "signup-instructor";
+  const { data, error } = await supabase.functions.invoke<{ ok?: boolean; code?: unknown }>(
+    functionName,
+    { body },
+  );
+
+  if (error) {
+    if (error instanceof FunctionsHttpError) {
+      try {
+        const payload = await error.context.json() as { code?: unknown };
+        if (isStaffSignupErrorCode(payload.code)) {
+          throw new StaffSignupError(payload.code);
+        }
+      } catch (responseError) {
+        if (responseError instanceof StaffSignupError) throw responseError;
+      }
+    }
+    throw new StaffSignupError("SIGNUP_UNAVAILABLE");
+  }
+
+  if (!data?.ok) {
+    throw new StaffSignupError(
+      isStaffSignupErrorCode(data?.code) ? data.code : "SIGNUP_UNAVAILABLE",
+    );
+  }
+}
+
+export function verifyStaffSignup(role: StaffSignupRole, accessCode: string) {
+  return invokeStaffSignup(role, { operation: "verify", accessCode });
+}
+
+export function createStaffAccount(
+  role: StaffSignupRole,
+  payload: { accessCode: string; fullName: string; email: string; password: string },
+) {
+  return invokeStaffSignup(role, { operation: "create", ...payload });
+}
+
 // ─── Types ───────────────────────────────────────────────
 
 export interface DbUser {
