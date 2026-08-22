@@ -372,6 +372,62 @@ CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
+-- Supabase Admin createUser applies custom raw_app_meta_data after the initial
+-- Auth row insert. Reconcile only trusted role changes; never read user metadata
+-- for authorization or rewrite unrelated public profile fields.
+CREATE OR REPLACE FUNCTION public.sync_auth_user_trusted_role()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_role public.user_role;
+BEGIN
+  v_role := CASE
+    WHEN NEW.raw_app_meta_data->>'role'
+      IN ('student', 'volunteer', 'instructor')
+      THEN (NEW.raw_app_meta_data->>'role')::public.user_role
+    ELSE 'student'::public.user_role
+  END;
+
+  UPDATE public.users
+  SET role = v_role
+  WHERE id = NEW.id;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION
+      'Cannot synchronize trusted role: public.users row is missing for Auth user %',
+      NEW.id;
+  END IF;
+
+  IF v_role = 'student'::public.user_role THEN
+    INSERT INTO public.student_profiles (user_id, clearance_level)
+    VALUES (NEW.id, 1)
+    ON CONFLICT (user_id) DO NOTHING;
+  ELSE
+    DELETE FROM public.student_profiles
+    WHERE user_id = NEW.id;
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.sync_auth_user_trusted_role()
+  FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS on_auth_user_trusted_role_changed ON auth.users;
+CREATE TRIGGER on_auth_user_trusted_role_changed
+  AFTER UPDATE OF raw_app_meta_data ON auth.users
+  FOR EACH ROW
+  WHEN (
+    (OLD.raw_app_meta_data->>'role')
+      IS DISTINCT FROM
+    (NEW.raw_app_meta_data->>'role')
+  )
+  EXECUTE FUNCTION public.sync_auth_user_trusted_role();
+
 -- ============================================================
 -- PHASE 5: RLS HELPER FUNCTIONS
 -- ============================================================
