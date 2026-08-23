@@ -63,6 +63,13 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+DO $$ BEGIN
+  CREATE TYPE password_reset_status AS ENUM (
+    'pending', 'processing', 'completed', 'cancelled', 'expired', 'failed'
+  );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- ============================================================
 -- PHASE 2: TABLES
 -- ============================================================
@@ -175,6 +182,67 @@ CREATE TABLE IF NOT EXISTS session_participants (
   student_id UUID REFERENCES users(id) ON DELETE CASCADE,
   joined_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (session_id, student_id)
+);
+
+CREATE TABLE IF NOT EXISTS password_reset_requests (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id            UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  session_id            UUID NOT NULL REFERENCES sessions(id) ON DELETE RESTRICT,
+  requested_by          UUID NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  requested_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  status                password_reset_status NOT NULL DEFAULT 'pending',
+  expires_at            TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '30 minutes'),
+  processing_by         UUID REFERENCES users(id) ON DELETE RESTRICT,
+  processing_started_at TIMESTAMPTZ,
+  handled_by            UUID REFERENCES users(id) ON DELETE RESTRICT,
+  handled_at            TIMESTAMPTZ,
+  attempt_count         INTEGER NOT NULL DEFAULT 0,
+  last_attempt_at       TIMESTAMPTZ,
+  last_failure_at       TIMESTAMPTZ,
+  last_failure_code     TEXT,
+  password_changed_at   TIMESTAMPTZ,
+  CONSTRAINT password_reset_requests_student_id_id_key
+    UNIQUE (student_id, id),
+  CONSTRAINT password_reset_requests_expiration_order_check
+    CHECK (expires_at > requested_at),
+  CONSTRAINT password_reset_requests_attempt_count_check
+    CHECK (attempt_count >= 0),
+  CONSTRAINT password_reset_requests_attempt_metadata_check
+    CHECK (
+      (attempt_count = 0 AND last_attempt_at IS NULL)
+      OR (attempt_count > 0 AND last_attempt_at IS NOT NULL)
+    ),
+  CONSTRAINT password_reset_requests_processing_metadata_check
+    CHECK ((processing_by IS NULL) = (processing_started_at IS NULL)),
+  CONSTRAINT password_reset_requests_processing_status_check
+    CHECK (
+      status <> 'processing'::password_reset_status
+      OR (processing_by IS NOT NULL AND processing_started_at IS NOT NULL)
+    ),
+  CONSTRAINT password_reset_requests_handled_metadata_check
+    CHECK ((handled_by IS NULL) = (handled_at IS NULL)),
+  CONSTRAINT password_reset_requests_failure_metadata_check
+    CHECK ((last_failure_at IS NULL) = (last_failure_code IS NULL)),
+  CONSTRAINT password_reset_requests_failure_code_check
+    CHECK (
+      last_failure_code IS NULL
+      OR last_failure_code ~ '^[a-z0-9][a-z0-9_]{0,63}$'
+    ),
+  CONSTRAINT password_reset_requests_password_changed_status_check
+    CHECK (
+      password_changed_at IS NULL
+      OR status = 'completed'::password_reset_status
+    )
+);
+
+CREATE TABLE IF NOT EXISTS student_password_change_requirements (
+  student_id      UUID PRIMARY KEY REFERENCES users(id) ON DELETE RESTRICT,
+  reset_request_id UUID NOT NULL UNIQUE,
+  required_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT student_password_change_requirements_request_student_fkey
+    FOREIGN KEY (student_id, reset_request_id)
+    REFERENCES password_reset_requests(student_id, id)
+    ON DELETE RESTRICT
 );
 
 CREATE TABLE IF NOT EXISTS case_progress (
@@ -290,6 +358,22 @@ CREATE INDEX IF NOT EXISTS idx_sessions_case_ids ON sessions USING GIN (case_ids
 CREATE INDEX IF NOT EXISTS idx_case_progress_session ON case_progress (session_id);
 CREATE INDEX IF NOT EXISTS idx_reviews_progress ON reviews (case_progress_id);
 CREATE INDEX IF NOT EXISTS idx_flags_progress ON intervention_flags (case_progress_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_requests_student_active
+  ON password_reset_requests (student_id)
+  WHERE status IN (
+    'pending'::password_reset_status,
+    'processing'::password_reset_status
+  );
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_status_requested_at
+  ON password_reset_requests (status, requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_session
+  ON password_reset_requests (session_id);
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_requester
+  ON password_reset_requests (requested_by);
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_processing_by
+  ON password_reset_requests (processing_by) WHERE processing_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_password_reset_requests_handled_by
+  ON password_reset_requests (handled_by) WHERE handled_by IS NOT NULL;
 
 -- ============================================================
 -- PHASE 4: TRIGGER FUNCTIONS
@@ -504,6 +588,209 @@ GRANT EXECUTE ON FUNCTION public.is_volunteer() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_joined_session(uuid) TO authenticated;
 
+-- SECURITY DEFINER avoids recursive RLS while checking the caller's live
+-- password-change requirement. JWT and public roles must remain reconciled.
+CREATE OR REPLACE FUNCTION public.may_access_normal_app()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  WITH caller AS (
+    SELECT
+      (SELECT auth.uid()) AS user_id,
+      ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role') AS trusted_role
+  )
+  SELECT CASE
+    WHEN caller.user_id IS NULL
+      OR caller.trusted_role NOT IN ('student', 'volunteer', 'instructor')
+      THEN false
+    WHEN NOT EXISTS (
+      SELECT 1
+      FROM public.users AS app_user
+      WHERE app_user.id = caller.user_id
+        AND app_user.role::text = caller.trusted_role
+    )
+      THEN false
+    WHEN caller.trusted_role IN ('volunteer', 'instructor')
+      THEN true
+    WHEN caller.trusted_role = 'student'
+      THEN NOT EXISTS (
+        SELECT 1
+        FROM public.student_password_change_requirements AS requirement
+        WHERE requirement.student_id = caller.user_id
+      )
+    ELSE false
+  END
+  FROM caller;
+$$;
+
+CREATE OR REPLACE FUNCTION public.request_student_password_reset(
+  p_student_id UUID,
+  p_session_id UUID
+)
+RETURNS public.password_reset_requests
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  requester_id public.users.id%TYPE := auth.uid();
+  trusted_role TEXT := (auth.jwt() -> 'app_metadata' ->> 'role');
+  requester_role public.user_role;
+  target_role public.user_role;
+  request_time TIMESTAMPTZ := now();
+  reset_request public.password_reset_requests%ROWTYPE;
+BEGIN
+  IF requester_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  IF p_student_id IS NULL OR p_session_id IS NULL THEN
+    RAISE EXCEPTION 'Student and session are required' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT app_user.role
+  INTO requester_role
+  FROM public.users AS app_user
+  WHERE app_user.id = requester_id;
+
+  IF NOT FOUND
+    OR trusted_role NOT IN ('volunteer', 'instructor')
+    OR requester_role::text IS DISTINCT FROM trusted_role
+  THEN
+    RAISE EXCEPTION 'Volunteer or instructor role required' USING ERRCODE = '42501';
+  END IF;
+
+  SELECT app_user.role
+  INTO target_role
+  FROM public.users AS app_user
+  WHERE app_user.id = p_student_id
+  FOR UPDATE;
+
+  IF NOT FOUND OR target_role <> 'student'::public.user_role THEN
+    RAISE EXCEPTION 'Student not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.session_participants AS participant
+    WHERE participant.session_id = p_session_id
+      AND participant.student_id = p_student_id
+  ) THEN
+    RAISE EXCEPTION 'Student is not joined to the supplied session' USING ERRCODE = '42501';
+  END IF;
+
+  IF requester_role = 'volunteer'::public.user_role
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.session_participants AS participant
+      WHERE participant.session_id = p_session_id
+        AND participant.student_id = requester_id
+    )
+  THEN
+    RAISE EXCEPTION 'Volunteer is not joined to the supplied session' USING ERRCODE = '42501';
+  END IF;
+
+  UPDATE public.password_reset_requests
+  SET status = 'expired'::public.password_reset_status
+  WHERE student_id = p_student_id
+    AND status = 'pending'::public.password_reset_status
+    AND expires_at <= request_time;
+
+  SELECT request_row.*
+  INTO reset_request
+  FROM public.password_reset_requests AS request_row
+  WHERE request_row.student_id = p_student_id
+    AND request_row.status IN (
+      'pending'::public.password_reset_status,
+      'processing'::public.password_reset_status
+    )
+  ORDER BY request_row.requested_at
+  LIMIT 1;
+
+  IF FOUND THEN
+    IF requester_role = 'volunteer'::public.user_role
+      AND (
+        reset_request.requested_by <> requester_id
+        OR NOT EXISTS (
+          SELECT 1
+          FROM public.session_participants AS participant
+          WHERE participant.session_id = reset_request.session_id
+            AND participant.student_id = requester_id
+        )
+      )
+    THEN
+      RAISE EXCEPTION 'An active password reset request already exists'
+        USING ERRCODE = '55000';
+    END IF;
+
+    RETURN reset_request;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1
+    FROM public.password_reset_requests AS recent_request
+    WHERE recent_request.student_id = p_student_id
+      AND recent_request.requested_at > request_time - INTERVAL '5 minutes'
+  ) THEN
+    RAISE EXCEPTION 'Password reset request cooldown is active' USING ERRCODE = '55000';
+  END IF;
+
+  BEGIN
+    INSERT INTO public.password_reset_requests (
+      student_id, session_id, requested_by, requested_at, expires_at
+    ) VALUES (
+      p_student_id,
+      p_session_id,
+      requester_id,
+      request_time,
+      request_time + INTERVAL '30 minutes'
+    )
+    RETURNING * INTO reset_request;
+  EXCEPTION
+    WHEN unique_violation THEN
+      SELECT request_row.*
+      INTO reset_request
+      FROM public.password_reset_requests AS request_row
+      WHERE request_row.student_id = p_student_id
+        AND request_row.status IN (
+          'pending'::public.password_reset_status,
+          'processing'::public.password_reset_status
+        )
+      ORDER BY request_row.requested_at
+      LIMIT 1;
+
+      IF NOT FOUND THEN
+        RAISE;
+      END IF;
+
+      IF requester_role = 'volunteer'::public.user_role
+        AND (
+          reset_request.requested_by <> requester_id
+          OR NOT EXISTS (
+            SELECT 1
+            FROM public.session_participants AS participant
+            WHERE participant.session_id = reset_request.session_id
+              AND participant.student_id = requester_id
+          )
+        )
+      THEN
+        RAISE EXCEPTION 'An active password reset request already exists'
+          USING ERRCODE = '55000';
+      END IF;
+  END;
+
+  RETURN reset_request;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.may_access_normal_app() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.may_access_normal_app() TO authenticated;
+REVOKE ALL ON FUNCTION public.request_student_password_reset(UUID, UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.request_student_password_reset(UUID, UUID) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.join_session_by_code(p_session_code TEXT)
 RETURNS public.sessions AS $$
 DECLARE
@@ -533,6 +820,11 @@ BEGIN
 
   IF joining_role NOT IN ('student'::public.user_role, 'volunteer'::public.user_role) THEN
     RAISE EXCEPTION 'Only students and volunteers can join sessions' USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT public.may_access_normal_app() THEN
+    RAISE EXCEPTION 'Password change required before normal application access'
+      USING ERRCODE = '42501';
   END IF;
 
   SELECT *
@@ -569,7 +861,7 @@ BEGIN
 
   RETURN joined_session;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 REVOKE ALL ON FUNCTION public.join_session_by_code(TEXT) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.join_session_by_code(TEXT) TO authenticated;
@@ -695,14 +987,19 @@ REVOKE ALL ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) FROM 
 GRANT EXECUTE ON FUNCTION public.save_case_builder(UUID, JSONB, JSONB, JSONB) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.raise_hand_for_progress(p_case_progress_id UUID)
-RETURNS intervention_flags AS $$
+RETURNS public.intervention_flags AS $$
 DECLARE
   caller_id UUID := auth.uid();
-  progress_row case_progress%ROWTYPE;
-  active_flag intervention_flags%ROWTYPE;
+  progress_row public.case_progress%ROWTYPE;
+  active_flag public.intervention_flags%ROWTYPE;
 BEGIN
   IF caller_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  IF NOT public.may_access_normal_app() THEN
+    RAISE EXCEPTION 'Password change required before normal application access'
+      USING ERRCODE = '42501';
   END IF;
 
   SELECT *
@@ -736,16 +1033,21 @@ BEGIN
 
   RETURN active_flag;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 CREATE OR REPLACE FUNCTION public.resolve_own_raise_hand_for_progress(p_case_progress_id UUID)
-RETURNS intervention_flags AS $$
+RETURNS public.intervention_flags AS $$
 DECLARE
   caller_id UUID := auth.uid();
-  resolved_flag intervention_flags%ROWTYPE;
+  resolved_flag public.intervention_flags%ROWTYPE;
 BEGIN
   IF caller_id IS NULL THEN
     RAISE EXCEPTION 'Authentication required' USING ERRCODE = '28000';
+  END IF;
+
+  IF NOT public.may_access_normal_app() THEN
+    RAISE EXCEPTION 'Password change required before normal application access'
+      USING ERRCODE = '42501';
   END IF;
 
   WITH resolved AS (
@@ -766,7 +1068,7 @@ BEGIN
 
   RETURN resolved_flag;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 REVOKE ALL ON FUNCTION public.raise_hand_for_progress(UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.raise_hand_for_progress(UUID) TO authenticated;
@@ -792,11 +1094,37 @@ $$;
 -- PHASE 7: RLS POLICIES
 -- ============================================================
 
+-- password recovery
+DROP POLICY IF EXISTS "password_reset_requests_read_authorized"
+  ON password_reset_requests;
+CREATE POLICY "password_reset_requests_read_authorized"
+  ON password_reset_requests FOR SELECT TO authenticated
+  USING (
+    public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND requested_by = (SELECT auth.uid())
+      AND public.has_joined_session(session_id)
+    )
+  );
+
+DROP POLICY IF EXISTS "password_change_requirements_read_own"
+  ON student_password_change_requirements;
+CREATE POLICY "password_change_requirements_read_own"
+  ON student_password_change_requirements FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    AND COALESCE(
+      ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role') = 'student',
+      false
+    )
+  );
+
 -- users
 DROP POLICY IF EXISTS "users_read_own" ON users;
 CREATE POLICY "users_read_own" ON users FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = id)
     OR public.is_instructor()
     OR (
       public.is_volunteer()
@@ -815,7 +1143,7 @@ DROP POLICY IF EXISTS "users_insert_auth" ON users;
 DROP POLICY IF EXISTS "profiles_read_own" ON student_profiles;
 CREATE POLICY "profiles_read_own" ON student_profiles FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = user_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = user_id)
     OR public.is_instructor()
     OR (
       public.is_volunteer()
@@ -828,11 +1156,11 @@ CREATE POLICY "profiles_read_own" ON student_profiles FOR SELECT TO authenticate
   );
 DROP POLICY IF EXISTS "profiles_update_own" ON student_profiles;
 CREATE POLICY "profiles_update_own" ON student_profiles FOR UPDATE TO authenticated
-  USING ((SELECT auth.uid()) = user_id)
-  WITH CHECK ((SELECT auth.uid()) = user_id);
+  USING ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = user_id)
+  WITH CHECK ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = user_id);
 DROP POLICY IF EXISTS "profiles_insert_own" ON student_profiles;
 CREATE POLICY "profiles_insert_own" ON student_profiles FOR INSERT TO authenticated
-  WITH CHECK ((SELECT auth.uid()) = user_id);
+  WITH CHECK ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = user_id);
 
 -- organizations
 DROP POLICY IF EXISTS "orgs_read_auth" ON organizations;
@@ -842,17 +1170,23 @@ CREATE POLICY "orgs_read_auth" ON organizations FOR SELECT TO authenticated
 -- memberships
 DROP POLICY IF EXISTS "memberships_read_auth" ON memberships;
 CREATE POLICY "memberships_read_auth" ON memberships FOR SELECT TO authenticated
-  USING ((SELECT auth.uid()) = user_id OR public.is_instructor());
+  USING (
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = user_id)
+    OR public.is_instructor()
+  );
 
 -- cases
 DROP POLICY IF EXISTS "cases_read_auth" ON cases;
 CREATE POLICY "cases_read_auth" ON cases FOR SELECT TO authenticated
   USING (
     public.is_instructor()
-    OR EXISTS (
-      SELECT 1 FROM public.sessions AS joined_session
-      WHERE joined_session.case_ids @> ARRAY[cases.id]
-        AND public.has_joined_session(joined_session.id)
+    OR (
+      (SELECT public.may_access_normal_app())
+      AND EXISTS (
+        SELECT 1 FROM public.sessions AS joined_session
+        WHERE joined_session.case_ids @> ARRAY[cases.id]
+          AND public.has_joined_session(joined_session.id)
+      )
     )
   );
 DROP POLICY IF EXISTS "cases_insert_instructor" ON cases;
@@ -866,22 +1200,37 @@ DROP POLICY IF EXISTS "cases_delete_instructor" ON cases;
 -- case_lanes
 DROP POLICY IF EXISTS "lanes_read_auth" ON case_lanes;
 CREATE POLICY "lanes_read_auth" ON case_lanes FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_lanes.case_id));
+  USING (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_lanes.case_id)
+  );
 
 -- case_concept_weights
 DROP POLICY IF EXISTS "weights_read_auth" ON case_concept_weights;
 CREATE POLICY "weights_read_auth" ON case_concept_weights FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_concept_weights.case_id));
+  USING (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_concept_weights.case_id)
+  );
 
 -- prediction_gates
 DROP POLICY IF EXISTS "gates_read_auth" ON prediction_gates;
 CREATE POLICY "gates_read_auth" ON prediction_gates FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = prediction_gates.case_id));
+  USING (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (SELECT 1 FROM public.cases WHERE cases.id = prediction_gates.case_id)
+  );
 
 -- sessions
 DROP POLICY IF EXISTS "sessions_read_auth" ON sessions;
 CREATE POLICY "sessions_read_auth" ON sessions FOR SELECT TO authenticated
-  USING (public.is_instructor() OR public.has_joined_session(id));
+  USING (
+    public.is_instructor()
+    OR (
+      (SELECT public.may_access_normal_app())
+      AND public.has_joined_session(id)
+    )
+  );
 DROP POLICY IF EXISTS "sessions_insert_instructor" ON sessions;
 CREATE POLICY "sessions_insert_instructor" ON sessions FOR INSERT TO authenticated
   WITH CHECK (public.is_instructor());
@@ -893,7 +1242,7 @@ CREATE POLICY "sessions_update_instructor" ON sessions FOR UPDATE TO authenticat
 DROP POLICY IF EXISTS "participants_read_auth" ON session_participants;
 CREATE POLICY "participants_read_auth" ON session_participants FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (public.is_volunteer() AND public.has_joined_session(session_id))
   );
@@ -903,14 +1252,15 @@ DROP POLICY IF EXISTS "participants_insert_student" ON session_participants;
 DROP POLICY IF EXISTS "progress_read_own" ON case_progress;
 CREATE POLICY "progress_read_own" ON case_progress FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (public.is_volunteer() AND public.has_joined_session(session_id))
   );
 DROP POLICY IF EXISTS "progress_insert_student" ON case_progress;
 CREATE POLICY "progress_insert_student" ON case_progress FOR INSERT TO authenticated
   WITH CHECK (
-    (SELECT auth.uid()) = student_id
+    (SELECT public.may_access_normal_app())
+    AND (SELECT auth.uid()) = student_id
     AND public.has_joined_session(session_id)
     AND EXISTS (
       SELECT 1 FROM public.sessions AS joined_session
@@ -921,12 +1271,16 @@ CREATE POLICY "progress_insert_student" ON case_progress FOR INSERT TO authentic
 DROP POLICY IF EXISTS "progress_update_student" ON case_progress;
 CREATE POLICY "progress_update_student" ON case_progress FOR UPDATE TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (public.is_volunteer() AND public.has_joined_session(session_id))
   )
   WITH CHECK (
-    ((SELECT auth.uid()) = student_id AND public.has_joined_session(session_id))
+    (
+      (SELECT public.may_access_normal_app())
+      AND (SELECT auth.uid()) = student_id
+      AND public.has_joined_session(session_id)
+    )
     OR public.is_instructor()
     OR (public.is_volunteer() AND public.has_joined_session(session_id))
   );
@@ -935,12 +1289,15 @@ CREATE POLICY "progress_update_student" ON case_progress FOR UPDATE TO authentic
 DROP POLICY IF EXISTS "predictions_read_own" ON predictions;
 CREATE POLICY "predictions_read_own" ON predictions FOR SELECT TO authenticated
   USING (
+    (SELECT public.may_access_normal_app())
+    AND
     EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = predictions.case_progress_id)
   );
 DROP POLICY IF EXISTS "predictions_insert_student" ON predictions;
 CREATE POLICY "predictions_insert_student" ON predictions FOR INSERT TO authenticated
   WITH CHECK (
-    status = 'pending'
+    (SELECT public.may_access_normal_app())
+    AND status = 'pending'
     AND EXISTS (
       SELECT 1 FROM public.case_progress AS progress
       WHERE progress.id = predictions.case_progress_id
@@ -951,13 +1308,20 @@ CREATE POLICY "predictions_insert_student" ON predictions FOR INSERT TO authenti
 -- reviews
 DROP POLICY IF EXISTS "reviews_read_auth" ON reviews;
 CREATE POLICY "reviews_read_auth" ON reviews FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = reviews.case_progress_id));
+  USING (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = reviews.case_progress_id
+    )
+  );
 DROP POLICY IF EXISTS "reviews_insert_auth" ON reviews;
 CREATE POLICY "reviews_insert_auth" ON reviews FOR INSERT TO authenticated
   WITH CHECK (
     public.is_instructor()
     OR (
-      claimed_by IS NULL AND claimed_at IS NULL
+      (SELECT public.may_access_normal_app())
+      AND claimed_by IS NULL AND claimed_at IS NULL
       AND reviewer_id IS NULL AND reviewed_at IS NULL AND outcome IS NULL
       AND EXISTS (
         SELECT 1 FROM public.case_progress AS progress
@@ -1008,11 +1372,18 @@ CREATE POLICY "reviews_claim_update" ON reviews FOR UPDATE TO authenticated
 -- review_attachments
 DROP POLICY IF EXISTS "attachments_read_auth" ON review_attachments;
 CREATE POLICY "attachments_read_auth" ON review_attachments FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.reviews WHERE reviews.id = review_attachments.review_id));
+  USING (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
+      SELECT 1 FROM public.reviews
+      WHERE reviews.id = review_attachments.review_id
+    )
+  );
 DROP POLICY IF EXISTS "attachments_insert_own" ON review_attachments;
 CREATE POLICY "attachments_insert_own" ON review_attachments FOR INSERT TO authenticated
   WITH CHECK (
-    (SELECT auth.uid()) = uploaded_by
+    (SELECT public.may_access_normal_app())
+    AND (SELECT auth.uid()) = uploaded_by
     AND EXISTS (SELECT 1 FROM public.reviews WHERE reviews.id = review_attachments.review_id)
   );
 
@@ -1020,12 +1391,15 @@ CREATE POLICY "attachments_insert_own" ON review_attachments FOR INSERT TO authe
 DROP POLICY IF EXISTS "reflections_read_own" ON reflections;
 CREATE POLICY "reflections_read_own" ON reflections FOR SELECT TO authenticated
   USING (
+    (SELECT public.may_access_normal_app())
+    AND
     EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = reflections.case_progress_id)
   );
 DROP POLICY IF EXISTS "reflections_insert_student" ON reflections;
 CREATE POLICY "reflections_insert_student" ON reflections FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
       SELECT 1 FROM public.case_progress AS progress
       WHERE progress.id = reflections.case_progress_id
         AND progress.student_id = (SELECT auth.uid())
@@ -1034,14 +1408,16 @@ CREATE POLICY "reflections_insert_student" ON reflections FOR INSERT TO authenti
 DROP POLICY IF EXISTS "reflections_update_student" ON reflections;
 CREATE POLICY "reflections_update_student" ON reflections FOR UPDATE TO authenticated
   USING (
-    EXISTS (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
       SELECT 1 FROM public.case_progress AS progress
       WHERE progress.id = reflections.case_progress_id
         AND progress.student_id = (SELECT auth.uid())
     )
   )
   WITH CHECK (
-    EXISTS (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
       SELECT 1 FROM public.case_progress AS progress
       WHERE progress.id = reflections.case_progress_id
         AND progress.student_id = (SELECT auth.uid())
@@ -1052,7 +1428,7 @@ CREATE POLICY "reflections_update_student" ON reflections FOR UPDATE TO authenti
 DROP POLICY IF EXISTS "flags_read_own" ON intervention_flags;
 CREATE POLICY "flags_read_own" ON intervention_flags FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (
       public.is_volunteer() AND case_progress_id IS NOT NULL
@@ -1101,12 +1477,15 @@ CREATE POLICY "flags_update_volunteer" ON intervention_flags FOR UPDATE TO authe
 DROP POLICY IF EXISTS "lane_attempts_read_own" ON lane_attempts;
 CREATE POLICY "lane_attempts_read_own" ON lane_attempts FOR SELECT TO authenticated
   USING (
+    (SELECT public.may_access_normal_app())
+    AND
     EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = lane_attempts.case_progress_id)
   );
 DROP POLICY IF EXISTS "lane_attempts_insert_student" ON lane_attempts;
 CREATE POLICY "lane_attempts_insert_student" ON lane_attempts FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (
+    (SELECT public.may_access_normal_app())
+    AND EXISTS (
       SELECT 1 FROM public.case_progress AS progress
       WHERE progress.id = lane_attempts.case_progress_id
         AND progress.student_id = (SELECT auth.uid())
@@ -1117,7 +1496,7 @@ CREATE POLICY "lane_attempts_insert_student" ON lane_attempts FOR INSERT TO auth
 DROP POLICY IF EXISTS "mastery_read_own" ON student_concept_mastery;
 CREATE POLICY "mastery_read_own" ON student_concept_mastery FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (
       public.is_volunteer()
@@ -1133,7 +1512,7 @@ CREATE POLICY "mastery_read_own" ON student_concept_mastery FOR SELECT TO authen
 DROP POLICY IF EXISTS "snapshots_read_own" ON concept_mastery_snapshots;
 CREATE POLICY "snapshots_read_own" ON concept_mastery_snapshots FOR SELECT TO authenticated
   USING (
-    (SELECT auth.uid()) = student_id
+    ((SELECT public.may_access_normal_app()) AND (SELECT auth.uid()) = student_id)
     OR public.is_instructor()
     OR (
       public.is_volunteer()
@@ -1161,6 +1540,19 @@ GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role
 GRANT INSERT ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 GRANT UPDATE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 GRANT DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+
+-- Recovery lifecycle tables are browser read-only. RLS further limits the
+-- authenticated SELECT rows; only service_role receives direct write grants.
+REVOKE ALL ON TABLE public.password_reset_requests
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON TABLE public.student_password_change_requirements
+  FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON TABLE public.password_reset_requests TO authenticated;
+GRANT SELECT ON TABLE public.student_password_change_requirements TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON TABLE public.password_reset_requests TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE
+  ON TABLE public.student_password_change_requirements TO service_role;
 
 -- public.users is provisioned by the Auth trigger. Browser clients may read
 -- authorized rows but cannot create profiles or change roles/usernames.
@@ -1197,10 +1589,14 @@ REVOKE ALL ON FUNCTION public.is_instructor() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.is_volunteer() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.is_volunteer_or_instructor() FROM PUBLIC, anon;
 REVOKE ALL ON FUNCTION public.has_joined_session(UUID) FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.may_access_normal_app() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.request_student_password_reset(UUID, UUID) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.is_instructor() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_volunteer() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO authenticated;
 GRANT EXECUTE ON FUNCTION public.has_joined_session(UUID) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.may_access_normal_app() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.request_student_password_reset(UUID, UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.raise_hand_for_progress(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand_for_progress(UUID) TO authenticated;
 
