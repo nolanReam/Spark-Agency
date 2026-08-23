@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
 import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, CheckSquare, RotateCcw } from "lucide-react";
-import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field, ThinBar } from "../../components/ui";
+import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
@@ -1027,42 +1027,14 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
 // ─── Analytics View ──────────────────────────────────────────────────
 
 function AnalyticsView() {
-  const width = 520, height = 180, padL = 48, padB = 36, padT = 12, padR = 16;
-  const innerW = width - padL - padR, innerH = height - padT - padB;
-  const colors: Record<string, string> = { "Variables": "var(--brand)", "Loops": "var(--accent)", "Conditionals": "var(--success)" };
-  const MASTERY_HISTORY = [{ concept: "Variables", history: [45, 58, 72] }, { concept: "Loops", history: [20, 38, 58] }, { concept: "Conditionals", history: [52, 68, 81] }];
-  const COHORT_DIFFICULTY = [
-    { caseTitle: "Loop Tracker — Daily Step Counter", avgAccuracy: 71, attempts: 14 },
-    { caseTitle: "Greeting Bot — Welcome Message", avgAccuracy: 88, attempts: 18 },
-    { caseTitle: "Pet Feeder Scheduler", avgAccuracy: 64, attempts: 9 },
-  ];
-  const nSessions = MASTERY_HISTORY[0].history.length;
-
   return (
     <div>
-      <TopBar title="Analytics" subtitle="Cohort learning evidence and concept difficulty" />
-      <Card style={{ padding: "1.25rem", marginBottom: "1.25rem" }}>
-        <SectionLabel icon={TrendingUp}>Learning Evidence Graph</SectionLabel>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", margin: "0.35rem 0 0.5rem" }}>X-axis: Workshop Sessions · Y-axis: Average Prediction Accuracy (%) · One line per concept</p>
-        <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", maxWidth: width, height: "auto" }}>
-          {[0, 25, 50, 75, 100].map(v => { const y = padT + innerH - (v / 100) * innerH; return <g key={v}><line x1={padL} x2={padL + innerW} y1={y} y2={y} stroke="var(--border)" strokeWidth="1" /><text x={padL - 6} y={y + 4} textAnchor="end" fontSize="10" fill="var(--text-muted)">{v}%</text></g>; })}
-          {MASTERY_HISTORY.map(m => {
-            const pts = m.history.map((val, i) => `${padL + (i / (nSessions - 1)) * innerW},${padT + innerH - (val / 100) * innerH}`).join(" ");
-            return <g key={m.concept}><polyline points={pts} fill="none" stroke={colors[m.concept] || "var(--text-muted)"} strokeWidth="2.5" strokeLinecap="round" />{m.history.map((val, i) => <circle key={i} cx={padL + (i / (nSessions - 1)) * innerW} cy={padT + innerH - (val / 100) * innerH} r="3.5" fill={colors[m.concept] || "var(--text-muted)"}><title>{m.concept}: {val}%</title></circle>)}</g>;
-          })}
-        </svg>
-        <div style={{ display: "flex", gap: "1rem", marginTop: "0.75rem" }}>
-          {MASTERY_HISTORY.map(m => <div key={m.concept} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem" }}><span style={{ width: 10, height: 10, borderRadius: 2, background: colors[m.concept], display: "inline-block" }} />{m.concept}: {m.history[0]}% → {m.history[m.history.length - 1]}%</div>)}
-        </div>
-      </Card>
+      <TopBar title="Analytics" subtitle="Workshop reporting" />
       <Card style={{ padding: "1.25rem" }}>
-        <SectionLabel icon={Target}>Case difficulty — cohort average accuracy</SectionLabel>
-        {COHORT_DIFFICULTY.map(c => (
-          <div key={c.caseTitle} style={{ marginTop: "0.7rem" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.3rem" }}><span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.caseTitle}</span><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{c.avgAccuracy}% avg · {c.attempts} attempts{c.avgAccuracy < 70 && <span style={{ marginLeft: "0.4rem" }}><Badge tone="warning">Needs attention</Badge></span>}</span></div>
-            <ThinBar value={c.avgAccuracy} max={100} color={c.avgAccuracy < 70 ? "var(--warning)" : "var(--brand)"} />
-          </div>
-        ))}
+        <SectionLabel icon={BarChart3}>Analytics unavailable for workshop beta</SectionLabel>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", lineHeight: 1.6, margin: "0.5rem 0 0" }}>
+          Live cohort analytics are not enabled yet. No sample or fabricated workshop metrics are shown here.
+        </p>
       </Card>
     </div>
   );

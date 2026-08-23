@@ -285,6 +285,11 @@ CREATE INDEX IF NOT EXISTS idx_flags_unresolved ON intervention_flags (resolved_
 CREATE INDEX IF NOT EXISTS idx_flags_progress_unresolved ON intervention_flags (case_progress_id, reason, raised_at) WHERE resolved_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_mastery_student_concept ON concept_mastery_snapshots (student_id, concept_tag, recorded_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON sessions (status);
+CREATE INDEX IF NOT EXISTS idx_session_participants_student_session ON session_participants (student_id, session_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_case_ids ON sessions USING GIN (case_ids);
+CREATE INDEX IF NOT EXISTS idx_case_progress_session ON case_progress (session_id);
+CREATE INDEX IF NOT EXISTS idx_reviews_progress ON reviews (case_progress_id);
+CREATE INDEX IF NOT EXISTS idx_flags_progress ON intervention_flags (case_progress_id);
 
 -- ============================================================
 -- PHASE 4: TRIGGER FUNCTIONS
@@ -432,17 +437,72 @@ CREATE TRIGGER on_auth_user_trusted_role_changed
 -- PHASE 5: RLS HELPER FUNCTIONS
 -- ============================================================
 
-CREATE OR REPLACE FUNCTION public.is_instructor() RETURNS boolean AS $$
-BEGIN
-  RETURN (auth.jwt() -> 'app_metadata' ->> 'role') = 'instructor';
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE OR REPLACE FUNCTION public.is_instructor()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role') = 'instructor',
+    false
+  );
+$$;
 
-CREATE OR REPLACE FUNCTION public.is_volunteer_or_instructor() RETURNS boolean AS $$
-BEGIN
-  RETURN (auth.jwt() -> 'app_metadata' ->> 'role') IN ('volunteer', 'instructor');
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+CREATE OR REPLACE FUNCTION public.is_volunteer()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role') = 'volunteer',
+    false
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_volunteer_or_instructor()
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY INVOKER
+SET search_path = ''
+AS $$
+  SELECT COALESCE(
+    ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role')
+      IN ('volunteer', 'instructor'),
+    false
+  );
+$$;
+
+-- SECURITY DEFINER avoids recursive RLS on session_participants. This helper
+-- reveals only whether the current authenticated user joined the given session.
+CREATE OR REPLACE FUNCTION public.has_joined_session(p_session_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+  SELECT (SELECT auth.uid()) IS NOT NULL
+    AND EXISTS (
+      SELECT 1
+      FROM public.session_participants AS participant
+      WHERE participant.session_id = p_session_id
+        AND participant.student_id = (SELECT auth.uid())
+    );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_instructor() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_volunteer() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_volunteer_or_instructor() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.has_joined_session(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_instructor() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_volunteer() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.has_joined_session(uuid) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.join_session_by_code(p_session_code TEXT)
 RETURNS public.sessions AS $$
@@ -734,184 +794,364 @@ $$;
 
 -- users
 DROP POLICY IF EXISTS "users_read_own" ON users;
-CREATE POLICY "users_read_own" ON users FOR SELECT
-  USING (auth.uid() = id OR is_volunteer_or_instructor());
+CREATE POLICY "users_read_own" ON users FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = id
+    OR public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND role = 'student'::public.user_role
+      AND EXISTS (
+        SELECT 1 FROM public.session_participants AS participant
+        WHERE participant.student_id = users.id
+          AND public.has_joined_session(participant.session_id)
+      )
+    )
+  );
 DROP POLICY IF EXISTS "users_update_own" ON users;
 DROP POLICY IF EXISTS "users_insert_auth" ON users;
 
 -- student_profiles
 DROP POLICY IF EXISTS "profiles_read_own" ON student_profiles;
-CREATE POLICY "profiles_read_own" ON student_profiles FOR SELECT
-  USING (auth.uid() = user_id OR is_volunteer_or_instructor());
+CREATE POLICY "profiles_read_own" ON student_profiles FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = user_id
+    OR public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND EXISTS (
+        SELECT 1 FROM public.session_participants AS participant
+        WHERE participant.student_id = student_profiles.user_id
+          AND public.has_joined_session(participant.session_id)
+      )
+    )
+  );
 DROP POLICY IF EXISTS "profiles_update_own" ON student_profiles;
-CREATE POLICY "profiles_update_own" ON student_profiles FOR UPDATE
-  USING (auth.uid() = user_id);
+CREATE POLICY "profiles_update_own" ON student_profiles FOR UPDATE TO authenticated
+  USING ((SELECT auth.uid()) = user_id)
+  WITH CHECK ((SELECT auth.uid()) = user_id);
 DROP POLICY IF EXISTS "profiles_insert_own" ON student_profiles;
-CREATE POLICY "profiles_insert_own" ON student_profiles FOR INSERT
-  WITH CHECK (auth.uid() = user_id);
+CREATE POLICY "profiles_insert_own" ON student_profiles FOR INSERT TO authenticated
+  WITH CHECK ((SELECT auth.uid()) = user_id);
 
 -- organizations
 DROP POLICY IF EXISTS "orgs_read_auth" ON organizations;
-CREATE POLICY "orgs_read_auth" ON organizations FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "orgs_read_auth" ON organizations FOR SELECT TO authenticated
+  USING (public.is_instructor());
 
 -- memberships
 DROP POLICY IF EXISTS "memberships_read_auth" ON memberships;
-CREATE POLICY "memberships_read_auth" ON memberships FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "memberships_read_auth" ON memberships FOR SELECT TO authenticated
+  USING ((SELECT auth.uid()) = user_id OR public.is_instructor());
 
 -- cases
 DROP POLICY IF EXISTS "cases_read_auth" ON cases;
-CREATE POLICY "cases_read_auth" ON cases FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "cases_read_auth" ON cases FOR SELECT TO authenticated
+  USING (
+    public.is_instructor()
+    OR EXISTS (
+      SELECT 1 FROM public.sessions AS joined_session
+      WHERE joined_session.case_ids @> ARRAY[cases.id]
+        AND public.has_joined_session(joined_session.id)
+    )
+  );
 DROP POLICY IF EXISTS "cases_insert_instructor" ON cases;
-CREATE POLICY "cases_insert_instructor" ON cases FOR INSERT
-  WITH CHECK (is_instructor());
+CREATE POLICY "cases_insert_instructor" ON cases FOR INSERT TO authenticated
+  WITH CHECK (public.is_instructor());
 DROP POLICY IF EXISTS "cases_update_instructor" ON cases;
-CREATE POLICY "cases_update_instructor" ON cases FOR UPDATE
-  USING (is_instructor()) WITH CHECK (is_instructor());
+CREATE POLICY "cases_update_instructor" ON cases FOR UPDATE TO authenticated
+  USING (public.is_instructor()) WITH CHECK (public.is_instructor());
 DROP POLICY IF EXISTS "cases_delete_instructor" ON cases;
-CREATE POLICY "cases_delete_instructor" ON cases FOR DELETE
-  USING (is_instructor());
 
 -- case_lanes
 DROP POLICY IF EXISTS "lanes_read_auth" ON case_lanes;
-CREATE POLICY "lanes_read_auth" ON case_lanes FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "lanes_read_auth" ON case_lanes FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_lanes.case_id));
 
 -- case_concept_weights
 DROP POLICY IF EXISTS "weights_read_auth" ON case_concept_weights;
-CREATE POLICY "weights_read_auth" ON case_concept_weights FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "weights_read_auth" ON case_concept_weights FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = case_concept_weights.case_id));
 
 -- prediction_gates
 DROP POLICY IF EXISTS "gates_read_auth" ON prediction_gates;
-CREATE POLICY "gates_read_auth" ON prediction_gates FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "gates_read_auth" ON prediction_gates FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.cases WHERE cases.id = prediction_gates.case_id));
 
 -- sessions
 DROP POLICY IF EXISTS "sessions_read_auth" ON sessions;
-CREATE POLICY "sessions_read_auth" ON sessions FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "sessions_read_auth" ON sessions FOR SELECT TO authenticated
+  USING (public.is_instructor() OR public.has_joined_session(id));
 DROP POLICY IF EXISTS "sessions_insert_instructor" ON sessions;
-CREATE POLICY "sessions_insert_instructor" ON sessions FOR INSERT
-  WITH CHECK (is_instructor());
+CREATE POLICY "sessions_insert_instructor" ON sessions FOR INSERT TO authenticated
+  WITH CHECK (public.is_instructor());
 DROP POLICY IF EXISTS "sessions_update_instructor" ON sessions;
-CREATE POLICY "sessions_update_instructor" ON sessions FOR UPDATE
-  USING (is_instructor());
+CREATE POLICY "sessions_update_instructor" ON sessions FOR UPDATE TO authenticated
+  USING (public.is_instructor()) WITH CHECK (public.is_instructor());
 
 -- session_participants
 DROP POLICY IF EXISTS "participants_read_auth" ON session_participants;
-CREATE POLICY "participants_read_auth" ON session_participants FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "participants_read_auth" ON session_participants FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (public.is_volunteer() AND public.has_joined_session(session_id))
+  );
 DROP POLICY IF EXISTS "participants_insert_student" ON session_participants;
-CREATE POLICY "participants_insert_student" ON session_participants FOR INSERT
-  WITH CHECK (auth.uid() = student_id);
 
 -- case_progress
 DROP POLICY IF EXISTS "progress_read_own" ON case_progress;
-CREATE POLICY "progress_read_own" ON case_progress FOR SELECT
-  USING (auth.uid() = student_id OR is_volunteer_or_instructor());
+CREATE POLICY "progress_read_own" ON case_progress FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (public.is_volunteer() AND public.has_joined_session(session_id))
+  );
 DROP POLICY IF EXISTS "progress_insert_student" ON case_progress;
-CREATE POLICY "progress_insert_student" ON case_progress FOR INSERT
-  WITH CHECK (auth.uid() = student_id);
+CREATE POLICY "progress_insert_student" ON case_progress FOR INSERT TO authenticated
+  WITH CHECK (
+    (SELECT auth.uid()) = student_id
+    AND public.has_joined_session(session_id)
+    AND EXISTS (
+      SELECT 1 FROM public.sessions AS joined_session
+      WHERE joined_session.id = case_progress.session_id
+        AND joined_session.case_ids @> ARRAY[case_progress.case_id]
+    )
+  );
 DROP POLICY IF EXISTS "progress_update_student" ON case_progress;
-CREATE POLICY "progress_update_student" ON case_progress FOR UPDATE
-  USING (auth.uid() = student_id OR is_volunteer_or_instructor());
+CREATE POLICY "progress_update_student" ON case_progress FOR UPDATE TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (public.is_volunteer() AND public.has_joined_session(session_id))
+  )
+  WITH CHECK (
+    ((SELECT auth.uid()) = student_id AND public.has_joined_session(session_id))
+    OR public.is_instructor()
+    OR (public.is_volunteer() AND public.has_joined_session(session_id))
+  );
 
 -- predictions
 DROP POLICY IF EXISTS "predictions_read_own" ON predictions;
-CREATE POLICY "predictions_read_own" ON predictions FOR SELECT
+CREATE POLICY "predictions_read_own" ON predictions FOR SELECT TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = predictions.case_progress_id AND (cp.student_id = auth.uid() OR is_volunteer_or_instructor()))
+    EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = predictions.case_progress_id)
   );
 DROP POLICY IF EXISTS "predictions_insert_student" ON predictions;
-CREATE POLICY "predictions_insert_student" ON predictions FOR INSERT
+CREATE POLICY "predictions_insert_student" ON predictions FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = predictions.case_progress_id AND cp.student_id = auth.uid())
+    status = 'pending'
+    AND EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = predictions.case_progress_id
+        AND progress.student_id = (SELECT auth.uid())
+    )
   );
 
 -- reviews
 DROP POLICY IF EXISTS "reviews_read_auth" ON reviews;
-CREATE POLICY "reviews_read_auth" ON reviews FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "reviews_read_auth" ON reviews FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = reviews.case_progress_id));
 DROP POLICY IF EXISTS "reviews_insert_auth" ON reviews;
-CREATE POLICY "reviews_insert_auth" ON reviews FOR INSERT
-  WITH CHECK (auth.uid() IS NOT NULL);
+CREATE POLICY "reviews_insert_auth" ON reviews FOR INSERT TO authenticated
+  WITH CHECK (
+    public.is_instructor()
+    OR (
+      claimed_by IS NULL AND claimed_at IS NULL
+      AND reviewer_id IS NULL AND reviewed_at IS NULL AND outcome IS NULL
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = reviews.case_progress_id
+          AND progress.student_id = (SELECT auth.uid())
+      )
+      AND (
+        (review_type = 'implementation'::public.review_type AND prediction_id IS NULL)
+        OR (
+          review_type = 'prediction'::public.review_type
+          AND EXISTS (
+            SELECT 1 FROM public.predictions AS prediction
+            WHERE prediction.id = reviews.prediction_id
+              AND prediction.case_progress_id = reviews.case_progress_id
+          )
+        )
+      )
+    )
+  );
 DROP POLICY IF EXISTS "reviews_claim_update" ON reviews;
-CREATE POLICY "reviews_claim_update" ON reviews FOR UPDATE
-  USING (is_volunteer_or_instructor());
+CREATE POLICY "reviews_claim_update" ON reviews FOR UPDATE TO authenticated
+  USING (
+    public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND (claimed_by IS NULL OR claimed_by = (SELECT auth.uid()))
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = reviews.case_progress_id
+          AND public.has_joined_session(progress.session_id)
+      )
+    )
+  )
+  WITH CHECK (
+    public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND claimed_by = (SELECT auth.uid())
+      AND (reviewer_id IS NULL OR reviewer_id = (SELECT auth.uid()))
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = reviews.case_progress_id
+          AND public.has_joined_session(progress.session_id)
+      )
+    )
+  );
 
 -- review_attachments
 DROP POLICY IF EXISTS "attachments_read_auth" ON review_attachments;
-CREATE POLICY "attachments_read_auth" ON review_attachments FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "attachments_read_auth" ON review_attachments FOR SELECT TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.reviews WHERE reviews.id = review_attachments.review_id));
 DROP POLICY IF EXISTS "attachments_insert_own" ON review_attachments;
-CREATE POLICY "attachments_insert_own" ON review_attachments FOR INSERT
-  WITH CHECK (auth.uid() = uploaded_by);
+CREATE POLICY "attachments_insert_own" ON review_attachments FOR INSERT TO authenticated
+  WITH CHECK (
+    (SELECT auth.uid()) = uploaded_by
+    AND EXISTS (SELECT 1 FROM public.reviews WHERE reviews.id = review_attachments.review_id)
+  );
 
 -- reflections
 DROP POLICY IF EXISTS "reflections_read_own" ON reflections;
-CREATE POLICY "reflections_read_own" ON reflections FOR SELECT
+CREATE POLICY "reflections_read_own" ON reflections FOR SELECT TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = reflections.case_progress_id AND (cp.student_id = auth.uid() OR is_volunteer_or_instructor()))
+    EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = reflections.case_progress_id)
   );
 DROP POLICY IF EXISTS "reflections_insert_student" ON reflections;
-CREATE POLICY "reflections_insert_student" ON reflections FOR INSERT
+CREATE POLICY "reflections_insert_student" ON reflections FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = reflections.case_progress_id AND cp.student_id = auth.uid())
+    EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = reflections.case_progress_id
+        AND progress.student_id = (SELECT auth.uid())
+    )
+  );
+DROP POLICY IF EXISTS "reflections_update_student" ON reflections;
+CREATE POLICY "reflections_update_student" ON reflections FOR UPDATE TO authenticated
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = reflections.case_progress_id
+        AND progress.student_id = (SELECT auth.uid())
+    )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = reflections.case_progress_id
+        AND progress.student_id = (SELECT auth.uid())
+    )
   );
 
 -- intervention_flags
 DROP POLICY IF EXISTS "flags_read_own" ON intervention_flags;
-CREATE POLICY "flags_read_own" ON intervention_flags FOR SELECT
-  USING (auth.uid() = student_id OR is_volunteer_or_instructor());
-DROP POLICY IF EXISTS "flags_insert_student" ON intervention_flags;
-CREATE POLICY "flags_insert_student" ON intervention_flags FOR INSERT
-  WITH CHECK (
-    auth.uid() = student_id
-    AND case_progress_id IS NOT NULL
-    AND EXISTS (
-      SELECT 1
-      FROM case_progress cp
-      WHERE cp.id = intervention_flags.case_progress_id
-        AND cp.student_id = auth.uid()
-        AND cp.case_id = intervention_flags.case_id
+CREATE POLICY "flags_read_own" ON intervention_flags FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (
+      public.is_volunteer() AND case_progress_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = intervention_flags.case_progress_id
+          AND progress.student_id = intervention_flags.student_id
+          AND progress.case_id = intervention_flags.case_id
+          AND public.has_joined_session(progress.session_id)
+      )
     )
   );
+DROP POLICY IF EXISTS "flags_insert_student" ON intervention_flags;
 DROP POLICY IF EXISTS "flags_update_volunteer" ON intervention_flags;
-CREATE POLICY "flags_update_volunteer" ON intervention_flags FOR UPDATE
-  USING (is_volunteer_or_instructor());
+CREATE POLICY "flags_update_volunteer" ON intervention_flags FOR UPDATE TO authenticated
+  USING (
+    public.is_instructor()
+    OR (
+      public.is_volunteer() AND case_progress_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = intervention_flags.case_progress_id
+          AND progress.student_id = intervention_flags.student_id
+          AND progress.case_id = intervention_flags.case_id
+          AND public.has_joined_session(progress.session_id)
+      )
+    )
+  )
+  WITH CHECK (
+    public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND resolved_by = (SELECT auth.uid())
+      AND case_progress_id IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM public.case_progress AS progress
+        WHERE progress.id = intervention_flags.case_progress_id
+          AND progress.student_id = intervention_flags.student_id
+          AND progress.case_id = intervention_flags.case_id
+          AND public.has_joined_session(progress.session_id)
+      )
+    )
+  );
 
 -- lane_attempts
 DROP POLICY IF EXISTS "lane_attempts_read_own" ON lane_attempts;
-CREATE POLICY "lane_attempts_read_own" ON lane_attempts FOR SELECT
+CREATE POLICY "lane_attempts_read_own" ON lane_attempts FOR SELECT TO authenticated
   USING (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = lane_attempts.case_progress_id AND (cp.student_id = auth.uid() OR is_volunteer_or_instructor()))
+    EXISTS (SELECT 1 FROM public.case_progress AS progress WHERE progress.id = lane_attempts.case_progress_id)
   );
 DROP POLICY IF EXISTS "lane_attempts_insert_student" ON lane_attempts;
-CREATE POLICY "lane_attempts_insert_student" ON lane_attempts FOR INSERT
+CREATE POLICY "lane_attempts_insert_student" ON lane_attempts FOR INSERT TO authenticated
   WITH CHECK (
-    EXISTS (SELECT 1 FROM case_progress cp WHERE cp.id = lane_attempts.case_progress_id AND cp.student_id = auth.uid())
+    EXISTS (
+      SELECT 1 FROM public.case_progress AS progress
+      WHERE progress.id = lane_attempts.case_progress_id
+        AND progress.student_id = (SELECT auth.uid())
+    )
   );
 
 -- student_concept_mastery
 DROP POLICY IF EXISTS "mastery_read_own" ON student_concept_mastery;
-CREATE POLICY "mastery_read_own" ON student_concept_mastery FOR SELECT
-  USING (auth.uid() = student_id OR is_volunteer_or_instructor());
+CREATE POLICY "mastery_read_own" ON student_concept_mastery FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND EXISTS (
+        SELECT 1 FROM public.session_participants AS participant
+        WHERE participant.student_id = student_concept_mastery.student_id
+          AND public.has_joined_session(participant.session_id)
+      )
+    )
+  );
 
 -- concept_mastery_snapshots
 DROP POLICY IF EXISTS "snapshots_read_own" ON concept_mastery_snapshots;
-CREATE POLICY "snapshots_read_own" ON concept_mastery_snapshots FOR SELECT
-  USING (auth.uid() = student_id OR is_volunteer_or_instructor());
+CREATE POLICY "snapshots_read_own" ON concept_mastery_snapshots FOR SELECT TO authenticated
+  USING (
+    (SELECT auth.uid()) = student_id
+    OR public.is_instructor()
+    OR (
+      public.is_volunteer()
+      AND EXISTS (
+        SELECT 1 FROM public.session_participants AS participant
+        WHERE participant.student_id = concept_mastery_snapshots.student_id
+          AND public.has_joined_session(participant.session_id)
+      )
+    )
+  );
 DROP POLICY IF EXISTS "snapshots_insert_instructor" ON concept_mastery_snapshots;
-CREATE POLICY "snapshots_insert_instructor" ON concept_mastery_snapshots FOR INSERT
-  WITH CHECK (is_instructor());
+CREATE POLICY "snapshots_insert_instructor" ON concept_mastery_snapshots FOR INSERT TO authenticated
+  WITH CHECK (public.is_instructor());
 
 -- session_summaries
 DROP POLICY IF EXISTS "summaries_read_auth" ON session_summaries;
-CREATE POLICY "summaries_read_auth" ON session_summaries FOR SELECT
-  USING (auth.uid() IS NOT NULL);
+CREATE POLICY "summaries_read_auth" ON session_summaries FOR SELECT TO authenticated
+  USING (public.is_instructor());
 
 -- ============================================================
 -- PHASE 8: TABLE GRANTS (CRITICAL — PostgREST prerequisite)
@@ -926,6 +1166,21 @@ GRANT DELETE ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
 -- authorized rows but cannot create profiles or change roles/usernames.
 REVOKE INSERT, UPDATE ON TABLE public.users FROM authenticated;
 
+-- Joining and Help Requests use validated SECURITY DEFINER RPCs. Keep browser
+-- updates limited to the columns used by the current state/claim/resolve flows.
+REVOKE INSERT ON TABLE public.session_participants FROM authenticated;
+REVOKE DELETE ON TABLE public.cases FROM authenticated;
+REVOKE UPDATE ON TABLE public.case_progress FROM authenticated;
+GRANT UPDATE (state, updated_at) ON TABLE public.case_progress TO authenticated;
+REVOKE UPDATE ON TABLE public.reviews FROM authenticated;
+GRANT UPDATE (
+  claimed_by, claimed_at, reviewer_id, reviewed_at, outcome, note
+) ON TABLE public.reviews TO authenticated;
+REVOKE INSERT ON TABLE public.intervention_flags FROM authenticated;
+REVOKE UPDATE ON TABLE public.intervention_flags FROM authenticated;
+GRANT UPDATE (resolved_at, resolved_by)
+  ON TABLE public.intervention_flags TO authenticated;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT ON TABLES TO anon, authenticated, service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -938,8 +1193,14 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 GRANT EXECUTE ON FUNCTION auth.uid() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.jwt() TO anon, authenticated;
 GRANT EXECUTE ON FUNCTION auth.role() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.is_instructor() TO anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.is_instructor() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_volunteer() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.is_volunteer_or_instructor() FROM PUBLIC, anon;
+REVOKE ALL ON FUNCTION public.has_joined_session(UUID) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.is_instructor() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_volunteer() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.is_volunteer_or_instructor() TO authenticated;
+GRANT EXECUTE ON FUNCTION public.has_joined_session(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.raise_hand_for_progress(UUID) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.resolve_own_raise_hand_for_progress(UUID) TO authenticated;
 

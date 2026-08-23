@@ -57,7 +57,6 @@ export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _exte
   const [prediction, setPrediction] = useState({ think: "", because: "" });
   const [reflectionText, setReflectionText] = useState("");
   const [laneAttempts, setLaneAttempts] = useState<string[]>([]);
-  const [screenshot, setScreenshot] = useState<string | null>(null);
   const [showPredictionForm, setShowPredictionForm] = useState(false);
   // Optimistic DB state: reflects user-initiated transitions immediately,
   // without waiting for React Query to refetch. Reset to null when the
@@ -261,7 +260,6 @@ export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _exte
               displayPrediction={predictionForDisplay}
               reflectionText={reflectionText} setReflectionText={setReflectionText}
               laneAttempts={laneAttempts} setLaneAttempts={setLaneAttempts}
-              screenshot={screenshot} setScreenshot={setScreenshot}
               readOnly={readOnly}
             />
           </div>

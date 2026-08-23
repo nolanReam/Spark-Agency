@@ -113,7 +113,7 @@ function LoginScreen({
               inputMode={mode === "staff" ? "email" : undefined}
               value={identifier}
               onChange={e => setIdentifier(e.target.value)}
-              placeholder={mode === "student" ? "student1" : "staff@example.com"}
+              placeholder={mode === "student" ? "your username" : "staff@example.com"}
               autoComplete={mode === "student" ? "username" : "email"}
               autoCapitalize="none"
               spellCheck={false}
@@ -198,9 +198,6 @@ function LoginScreen({
             Create Instructor Account
           </button>
 
-          <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", textAlign: "center" }}>
-            Demo accounts &mdash; username: <strong>student1</strong>, password: <strong>demo1234</strong>
-          </div>
         </form>
       </div>
     </div>

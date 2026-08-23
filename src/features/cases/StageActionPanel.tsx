@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Wrench, Hourglass, UserCheck, CheckCircle2, Lock, Send, ThumbsUp, ThumbsDown, Lightbulb, FlaskConical, Camera, Image } from "lucide-react";
+import { Wrench, Hourglass, UserCheck, CheckCircle2, Lock, Send, Lightbulb, FlaskConical } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Textarea, Field } from "../../components/ui";
 import type { StageKey } from "../../lib/constants";
 
@@ -20,40 +20,35 @@ interface Props {
   setReflectionText: (text: string) => void;
   laneAttempts: string[];
   setLaneAttempts: (a: string[]) => void;
-  screenshot: string | null;
-  setScreenshot: (s: string | null) => void;
   readOnly?: boolean;
 }
 
-function WaitingCard({ label, body, sim }: { label: string; body: string; sim: ReactNode }) {
+function WaitingCard({ label, body }: { label: string; body: string }) {
   return (
     <Card style={{ padding: "1.25rem", border: "1px solid var(--accent)", background: "var(--accent-soft)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
         <Hourglass size={16} color="var(--accent)" />
         <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--accent)" }}>{label}</span>
       </div>
-      <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 0.85rem" }}>{body}</p>
-      <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginBottom: "0.55rem" }}>Demo controls (performed by volunteer in person):</div>
-      {sim}
+      <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: 0 }}>{body}</p>
     </Card>
   );
 }
 
-function InProgressCard({ label, body, sim }: { label: string; body: string; sim: ReactNode }) {
+function InProgressCard({ label, body, children }: { label: string; body: string; children?: ReactNode }) {
   return (
     <Card style={{ padding: "1.25rem", border: "1px solid var(--brand)", background: "var(--brand-soft)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
         <UserCheck size={16} color="var(--brand)" />
         <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--brand)" }}>{label}</span>
       </div>
-      <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 0.85rem" }}>{body}</p>
-      <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginBottom: "0.55rem" }}>Demo controls (performed by volunteer in person):</div>
-      {sim}
+      <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: children ? "0 0 0.85rem" : 0 }}>{body}</p>
+      {children}
     </Card>
   );
 }
 
-export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, displayPrediction, reflectionText, setReflectionText, laneAttempts, setLaneAttempts, screenshot, setScreenshot, readOnly }: Props) {
+export function StageActionPanel({ stage, setStage, caseData, prediction, setPrediction, displayPrediction, reflectionText, setReflectionText, laneAttempts, setLaneAttempts, readOnly }: Props) {
   const predictionForDisplay = displayPrediction ?? prediction;
 
   switch (stage) {
@@ -78,25 +73,6 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
               ))}
             </div>
           )}
-          {/* Screenshot */}
-          <div style={{ marginBottom: "1rem", padding: "0.85rem", borderRadius: "10px", background: "var(--surface-2)" }}>
-            <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.4rem" }}>Optional screenshot</div>
-            {!screenshot ? (
-              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", cursor: "pointer", fontSize: "0.83rem" }}>
-                <Camera size={14} color="var(--text-muted)" />
-                <span style={{ color: "var(--text-muted)" }}>Add a photo of your Scratch screen (optional, never required)</span>
-                <input type="file" accept="image/*" style={{ display: "none" }} onChange={() => setScreenshot("placeholder")} />
-              </label>
-            ) : (
-              <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-                <div style={{ width: 48, height: 36, background: "var(--border)", borderRadius: "6px", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                  <Image size={16} color="var(--text-muted)" />
-                </div>
-                <span style={{ fontSize: "0.82rem" }}>Screenshot attached</span>
-                <Btn variant="ghost" size="sm" onClick={() => setScreenshot(null)}>Remove</Btn>
-              </div>
-            )}
-          </div>
           <Btn variant="accent" icon={Send} disabled={readOnly} onClick={() => setStage("impl_review_requested")}>{readOnly ? "Read-only" : "Request Implementation Review"}</Btn>
         </Card>
       );
@@ -106,7 +82,6 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
         <WaitingCard
           label="Implementation Review Requested"
           body="You're in the queue. Keep your Scratch project open — a volunteer will come check it against the Client Brief and Initialization Rules."
-          sim={<Btn variant="primary" icon={UserCheck} onClick={() => setStage("impl_review_claimed")}>Volunteer claims (demo)</Btn>}
         />
       );
 
@@ -115,12 +90,6 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
         <InProgressCard
           label="A volunteer is reviewing your project"
           body="A volunteer has claimed your review and is on their way. They'll check your project against the brief, init rules, and any add-ons you attempted."
-          sim={
-            <div style={{ display: "flex", gap: "0.6rem" }}>
-              <Btn variant="success" icon={ThumbsUp} onClick={() => setStage("impl_approved")}>Approve</Btn>
-              <Btn variant="subtle" icon={ThumbsDown} onClick={() => setStage("building")}>Return for revision</Btn>
-            </div>
-          }
         />
       );
 
@@ -166,9 +135,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
           </div>
           <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 0.75rem" }}>Your prediction is locked and waiting in the queue.</p>
           <div style={{ marginBottom: "0.5rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>I think...</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.think}</div></div>
-          <div style={{ marginBottom: "0.85rem" }}><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Because...</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.because}</div></div>
-          <div style={{ fontSize: "0.73rem", color: "var(--text-muted)", marginBottom: "0.55rem" }}>Demo controls:</div>
-          <Btn variant="primary" icon={UserCheck} onClick={() => setStage("prediction_review_claimed")}>Volunteer claims (demo)</Btn>
+          <div><div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Because...</div><div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.because}</div></div>
         </Card>
       );
 
@@ -177,19 +144,14 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
         <InProgressCard
           label="A volunteer is reviewing your prediction"
           body="A volunteer has claimed your review and will talk through your reasoning before clearing you to test."
-          sim={
-            <div>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>I think...</div>
-              <div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)", marginBottom: "0.5rem" }}>{prediction.think}</div>
-              <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Because...</div>
-              <div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)", marginBottom: "0.75rem" }}>{prediction.because}</div>
-              <div style={{ display: "flex", gap: "0.6rem" }}>
-                <Btn variant="success" icon={ThumbsUp} onClick={() => setStage("prediction_approved")}>Approve</Btn>
-                <Btn variant="subtle" icon={ThumbsDown} onClick={() => setStage("prediction_submitted")}>Return for revision</Btn>
-              </div>
-            </div>
-          }
-        />
+        >
+          <div>
+            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>I think...</div>
+            <div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)", marginBottom: "0.5rem" }}>{prediction.think}</div>
+            <div style={{ fontSize: "0.7rem", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "0.25rem" }}>Because...</div>
+            <div style={{ fontSize: "0.82rem", padding: "0.55rem", borderRadius: "8px", background: "var(--surface)" }}>{prediction.because}</div>
+          </div>
+        </InProgressCard>
       );
 
     case "prediction_approved":

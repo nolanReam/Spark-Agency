@@ -78,7 +78,7 @@ function VolunteerJoinSession() {
         <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.5rem", margin: "0 0 0.5rem" }}>Join a session</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", lineHeight: 1.5, margin: "0 0 1.25rem" }}>Enter the session code provided by the instructor.</p>
         <form onSubmit={handleSubmit}>
-          <Input value={code} onChange={event => setCode(event.target.value.toUpperCase())} placeholder="AGENCY-790" aria-label="Session code" autoCapitalize="characters" autoComplete="off" disabled={joinSession.isPending} />
+          <Input value={code} onChange={event => setCode(event.target.value.toUpperCase())} placeholder="Enter session code" aria-label="Session code" autoCapitalize="characters" autoComplete="off" disabled={joinSession.isPending} />
           {error && <div style={{ color: "var(--danger)", background: "var(--danger-soft)", border: "1px solid var(--danger)", borderRadius: "8px", padding: "0.65rem 0.75rem", fontSize: "0.82rem", marginTop: "0.75rem" }}>{error}</div>}
           <Btn type="submit" disabled={joinSession.isPending} style={{ width: "100%", justifyContent: "center", marginTop: "1rem" }}>
             {joinSession.isPending ? "Joining…" : "Join session"}
