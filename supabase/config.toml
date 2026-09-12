@@ -6,3 +6,9 @@ verify_jwt = false
 
 [functions.signup-instructor]
 verify_jwt = false
+
+[functions.reset-student-password]
+verify_jwt = true
+
+[functions.change-student-password]
+verify_jwt = true
