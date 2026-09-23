@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "./client";
+import { instructorQueryKeys } from "./queryKeys";
 
 // ─── Auth & Profile ──────────────────────────────────────
 
@@ -13,10 +14,11 @@ export function useStudentProfile(userId: string) {
 
 // ─── Cases ───────────────────────────────────────────────
 
-export function useCases(status?: string) {
+export function useCases(instructorId: string, status?: string) {
   return useQuery({
-    queryKey: ["cases", status],
-    queryFn: () => api.getCases(status),
+    queryKey: instructorQueryKeys.cases(instructorId, status),
+    queryFn: () => api.getCases(instructorId, status),
+    enabled: !!instructorId,
   });
 }
 
@@ -44,23 +46,23 @@ export function useCaseConceptWeights(caseId: string) {
   });
 }
 
-export function useCaseBuilderAggregate(caseId: string) {
+export function useCaseBuilderAggregate(caseId: string, instructorId: string) {
   return useQuery({
-    queryKey: ["case-builder", caseId],
+    queryKey: instructorQueryKeys.caseBuilder(instructorId, caseId),
     queryFn: () => api.getCaseBuilderAggregate(caseId),
-    enabled: !!caseId,
+    enabled: !!caseId && !!instructorId,
   });
 }
 
-export function useSaveCaseBuilder() {
+export function useSaveCaseBuilder(instructorId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.saveCaseBuilder,
     onSuccess: async (caseId) => {
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["cases"] }),
+        qc.invalidateQueries({ queryKey: instructorQueryKeys.casesRoot(instructorId) }),
         qc.invalidateQueries({ queryKey: ["case", caseId] }),
-        qc.invalidateQueries({ queryKey: ["case-builder", caseId] }),
+        qc.invalidateQueries({ queryKey: instructorQueryKeys.caseBuilder(instructorId, caseId) }),
         qc.invalidateQueries({ queryKey: ["case-lanes", caseId] }),
         qc.invalidateQueries({ queryKey: ["case-concept-weights", caseId] }),
       ]);
@@ -68,44 +70,38 @@ export function useSaveCaseBuilder() {
   });
 }
 
-export function useCreateCase() {
+export function useCreateCase(instructorId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: api.createCase,
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cases"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: instructorQueryKeys.casesRoot(instructorId) }),
   });
 }
 
-export function useUpdateCase() {
+export function useUpdateCase(instructorId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, updates }: { id: string; updates: Partial<api.DbCase> }) =>
       api.updateCase(id, updates),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cases"] }),
-  });
-}
-
-export function useDeleteCase() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (caseId: string) => api.deleteCase(caseId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["cases"] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: instructorQueryKeys.casesRoot(instructorId) }),
   });
 }
 
 // ─── Sessions ────────────────────────────────────────────
 
-export function useSessions() {
+export function useSessions(instructorId: string) {
   return useQuery({
-    queryKey: ["sessions"],
-    queryFn: api.getSessions,
+    queryKey: instructorQueryKeys.sessions(instructorId),
+    queryFn: () => api.getSessions(instructorId),
+    enabled: !!instructorId,
   });
 }
 
-export function useActiveSession() {
+export function useActiveSession(instructorId: string) {
   return useQuery({
-    queryKey: ["active-session"],
-    queryFn: api.getActiveSession,
+    queryKey: instructorQueryKeys.activeSession(instructorId),
+    queryFn: () => api.getActiveSession(instructorId),
+    enabled: !!instructorId,
     // Poll every 30s since session status can change
     refetchInterval: 30_000,
   });
@@ -120,23 +116,28 @@ export function useJoinedLiveSession(userId: string) {
   });
 }
 
-export function useCreateSession() {
+export function useCreateSession(instructorId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ sessionCode, caseIds, instructorId, status }: { sessionCode: string; caseIds: string[]; instructorId?: string; status?: string }) =>
-      api.createSession(sessionCode, caseIds, instructorId, status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["sessions"] }),
+    mutationFn: ({ sessionCode, caseIds, status }: { sessionCode: string; caseIds: string[]; status?: string }) =>
+      api.createSession(sessionCode, caseIds, status),
+    onSuccess: async () => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: instructorQueryKeys.sessions(instructorId) }),
+        qc.invalidateQueries({ queryKey: instructorQueryKeys.activeSession(instructorId) }),
+      ]);
+    },
   });
 }
 
-export function useUpdateSessionStatus() {
+export function useUpdateSessionStatus(instructorId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ sessionId, status }: { sessionId: string; status: string }) =>
       api.updateSessionStatus(sessionId, status),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sessions"] });
-      qc.invalidateQueries({ queryKey: ["active-session"] });
+      qc.invalidateQueries({ queryKey: instructorQueryKeys.sessions(instructorId) });
+      qc.invalidateQueries({ queryKey: instructorQueryKeys.activeSession(instructorId) });
     },
   });
 }
@@ -323,15 +324,14 @@ export function useLowerHand() {
 }
 
 /** Enriched help requests with student names and case titles */
-export function useHelpRequests(sessionId?: string) {
-  const isGlobalInstructorQuery = sessionId === undefined;
+export function useHelpRequests(sessionId: string, instructorId?: string) {
   return useQuery({
-    queryKey: isGlobalInstructorQuery ? ["help-requests-enriched"] : ["help-requests-enriched", sessionId],
-    queryFn: () => isGlobalInstructorQuery
-      ? api.getGlobalEnrichedHelpRequests()
-      : api.getEnrichedHelpRequests(sessionId!),
-    enabled: isGlobalInstructorQuery || !!sessionId,
-    refetchInterval: isGlobalInstructorQuery || sessionId ? 15_000 : false,
+    queryKey: instructorId
+      ? instructorQueryKeys.helpRequests(instructorId, sessionId)
+      : ["help-requests-enriched", sessionId],
+    queryFn: () => api.getEnrichedHelpRequests(sessionId),
+    enabled: !!sessionId,
+    refetchInterval: sessionId ? 15_000 : false,
   });
 }
 
@@ -356,18 +356,22 @@ export function useStudentMastery(studentId: string) {
 
 // ─── Session Monitor ─────────────────────────────────────
 
-export function useSessionQueueHealth(sessionId: string) {
+export function useSessionQueueHealth(sessionId: string, instructorId?: string) {
   return useQuery({
-    queryKey: ["queue-health", sessionId],
+    queryKey: instructorId
+      ? instructorQueryKeys.queueHealth(instructorId, sessionId)
+      : ["queue-health", sessionId],
     queryFn: () => api.getSessionQueueHealth(sessionId),
     enabled: !!sessionId,
     refetchInterval: 20_000,
   });
 }
 
-export function useSessionParticipants(sessionId: string) {
+export function useSessionParticipants(sessionId: string, instructorId?: string) {
   return useQuery({
-    queryKey: ["session-participants", sessionId],
+    queryKey: instructorId
+      ? instructorQueryKeys.participants(instructorId, sessionId)
+      : ["session-participants", sessionId],
     queryFn: () => api.getSessionParticipants(sessionId),
     enabled: !!sessionId,
   });

@@ -375,8 +375,10 @@ function formToCaseBuilderPayload(f: CaseFormData, status: "draft" | "published"
 
 function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack: () => void }) {
   const isNew = !existing;
-  const aggregateQuery = useCaseBuilderAggregate(existing?.id ?? "");
-  const saveCaseBuilder = useSaveCaseBuilder();
+  const { user } = useAuth();
+  const instructorId = user?.id ?? "";
+  const aggregateQuery = useCaseBuilderAggregate(existing?.id ?? "", instructorId);
+  const saveCaseBuilder = useSaveCaseBuilder(instructorId);
   const [form, setForm] = useState<CaseFormData>(emptyCaseForm);
   const [hydrated, setHydrated] = useState(isNew);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -807,8 +809,11 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
   const [sessionCode, setSessionCode] = useState<string | null>(null);
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const createSession = useCreateSession();
-  const publishedCases = cases.filter(c => c.status === "published");
+  const instructorId = user?.id ?? "";
+  const createSession = useCreateSession(instructorId);
+  const publishedCases = cases.filter(
+    c => c.status === "published" && c.created_by === instructorId,
+  );
   const toggleCase = (id: string) => { if (selectedCases.includes(id)) setSelectedCases(selectedCases.filter(c => c !== id)); else setSelectedCases([...selectedCases, id]); };
 
   const handleGenerateCode = () => {
@@ -822,7 +827,7 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
     if (!sessionCode || selectedCases.length === 0) return;
     setError(null);
     createSession.mutate(
-      { sessionCode, caseIds: selectedCases, instructorId: user?.id, status: "open" },
+      { sessionCode, caseIds: selectedCases, status: "open" },
       {
         onSuccess: () => onBack(),
         onError: (err) => {
@@ -908,14 +913,17 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
 
 // ─── Session Monitor View ───────────────────────────────────────────
 
-function SessionMonitorView({ session, participants, queueHealth, helpRequests, onBack }: {
+function SessionMonitorView({ session, participants, participantsUnavailable, queueHealth, helpRequests, onBack, onCreateSession }: {
   session: DbSession | null; participants: { student_id: string; display_name?: string; role?: string }[];
   queueHealth: { state: string }[]; helpRequests: EnrichedHelpRequest[]; onBack: (() => void) | null;
+  onCreateSession?: () => void;
+  participantsUnavailable: boolean;
 }) {
+  const { user } = useAuth();
   const [closing, setClosing] = useState(false);
   const [closed, setClosed] = useState(session?.status === "closed");
   const [isClosing, setIsClosing] = useState(false);
-  const updateStatus = useUpdateSessionStatus();
+  const updateStatus = useUpdateSessionStatus(user?.id ?? "");
 
   const studentsPresent = participants.filter(p => p.role === "student").length;
   const volunteersActive = participants.filter(p => p.role === "volunteer").length;
@@ -928,7 +936,21 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
   const pendingHelp = helpRequests.length;
   const max = Math.max(...Object.values(stateCounts), 1);
 
-  const helpItems = helpRequests.map(h => ({ id: h.id, student: h.student_name, caseTitle: h.case_title, waitMin: Math.round((Date.now() - new Date(h.raised_at).getTime()) / 60_000), reason: h.reason }));
+  const helpItems = helpRequests.map(h => ({ id: h.id, student: h.student_name, caseTitle: h.case_title, waitMin: h.wait_minutes, reason: h.reason }));
+
+  if (!session) return (
+    <div>
+      <TopBar title="Operations" subtitle="No active session" />
+      <Card style={{ padding: "2rem", textAlign: "center" }}>
+        <Calendar size={28} color="var(--brand)" style={{ marginBottom: "0.75rem" }} />
+        <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>No active session</div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1rem" }}>
+          Create a session when you are ready to invite students and begin monitoring.
+        </p>
+        {onCreateSession && <Btn variant="primary" icon={Plus} onClick={onCreateSession}>Create Session</Btn>}
+      </Card>
+    </div>
+  );
 
   if (closed) return (
     <div>
@@ -936,7 +958,7 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
       <Card style={{ padding: "1.25rem", border: "1px solid var(--success)", background: "var(--success-soft)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.75rem" }}><CheckCircle2 size={18} color="var(--success)" /><span style={{ fontWeight: 700 }}>Session closed successfully</span></div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(160px,1fr))", gap: "0.75rem" }}>
-          {[["Students present", studentsPresent], ["Reviews pending", queueHealth.length], ["Help requests", pendingHelp]].map(([label, val]) => (
+          {[["Students present", participantsUnavailable ? "—" : studentsPresent], ["Reviews pending", queueHealth.length], ["Help requests", pendingHelp]].map(([label, val]) => (
             <div key={label as string}><div style={{ fontSize: "0.72rem", color: "var(--success)", textTransform: "uppercase", marginBottom: "0.2rem" }}>{label as string}</div><div style={{ fontFamily: "'Space Grotesk',sans-serif", fontWeight: 700, fontSize: "1.15rem" }}>{String(val)}</div></div>
           ))}
         </div>
@@ -975,13 +997,20 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
         </div>)}
         onBack={onBack ?? (() => {})}
       />
+      {participantsUnavailable && (
+        <Card role="alert" style={{ padding: "0.85rem", border: "1px solid var(--warning)", background: "var(--warning-soft)", marginBottom: "1rem" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
+            <AlertCircle size={15} color="var(--warning)" />Participant counts are unavailable because one or more profiles could not be loaded.
+          </div>
+        </Card>
+      )}
       {closing && !closed && (
         <Card style={{ padding: "0.85rem", border: "1px solid var(--warning)", background: "var(--warning-soft)", marginBottom: "1rem" }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}><AlertCircle size={15} color="var(--warning)" />Closing is a two-step process. New review requests will be blocked.</div>
         </Card>
       )}
       <div style={{ display: "flex", gap: "1rem", marginBottom: "1.25rem", flexWrap: "wrap" }}>
-        {[{ icon: Users, label: "Students", val: studentsPresent }, { icon: UserCheck, label: "Volunteers", val: volunteersActive }, { icon: Inbox, label: "Pending reviews", val: pendingReviews, tone: "var(--accent)" }, { icon: HelpCircle, label: "Help requests", val: pendingHelp, tone: "var(--danger)" }].map(k => (
+        {[{ icon: Users, label: "Students", val: participantsUnavailable ? "—" : studentsPresent }, { icon: UserCheck, label: "Volunteers", val: participantsUnavailable ? "—" : volunteersActive }, { icon: Inbox, label: "Pending reviews", val: pendingReviews, tone: "var(--accent)" }, { icon: HelpCircle, label: "Help requests", val: pendingHelp, tone: "var(--danger)" }].map(k => (
           <Card key={k.label} style={{ padding: "1rem", flex: "1 1 0", minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.4rem" }}><k.icon size={13} /><span>{k.label}</span></div>
             <div style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.6rem", fontWeight: 700, color: (k as { tone?: string }).tone || "var(--text)" }}>{k.val}</div>
@@ -1082,16 +1111,20 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
   const [sessionMonitorOpen, setSessionMonitorOpen] = useState(false);
   const [monitoringSession, setMonitoringSession] = useState<DbSession | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { user } = useAuth();
+  const instructorId = user?.id ?? "";
 
   // Live data
-  const { data: cases, isLoading: casesLoading } = useCases();
-  const { data: sessions, isLoading: sessionsLoading } = useSessions();
-  const createCase = useCreateCase();
-  const updateCase = useUpdateCase();
-  const { data: activeSession } = useActiveSession();
-  const { data: participants } = useSessionParticipants(activeSession?.id ?? "");
-  const { data: queueHealth } = useSessionQueueHealth(activeSession?.id ?? "");
-  const { data: helpRequests } = useHelpRequests();
+  const { data: cases, isLoading: casesLoading } = useCases(instructorId);
+  const { data: sessions, isLoading: sessionsLoading } = useSessions(instructorId);
+  const createCase = useCreateCase(instructorId);
+  const updateCase = useUpdateCase(instructorId);
+  const { data: activeSession } = useActiveSession(instructorId);
+  const displayedSession = sessionMonitorOpen && monitoringSession ? monitoringSession : activeSession;
+  const displayedSessionId = displayedSession?.id ?? "";
+  const { data: participants, isError: participantsUnavailable } = useSessionParticipants(displayedSessionId, instructorId);
+  const { data: queueHealth } = useSessionQueueHealth(displayedSessionId, instructorId);
+  const { data: helpRequests } = useHelpRequests(displayedSessionId, instructorId);
 
   // Roster progress data - fetch all student progress for roster view
   // studentIds unused and removed to resolve compilation error
@@ -1175,7 +1208,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
     }
     if (view === "sessions") {
       if (sessionBuilderOpen) return <SessionBuilderView cases={cases ?? []} onBack={() => setSessionBuilderOpen(false)} />;
-      if (sessionMonitorOpen && monitoringSession) return <SessionMonitorView session={monitoringSession} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={() => setSessionMonitorOpen(false)} />;
+      if (sessionMonitorOpen && monitoringSession) return <SessionMonitorView session={monitoringSession} participants={participants ?? []} participantsUnavailable={participantsUnavailable} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={() => setSessionMonitorOpen(false)} />;
       return (
         <SessionListView
           sessions={sessions ?? []}
@@ -1185,7 +1218,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
         />
       );
     }
-    if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} />;
+    if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} participantsUnavailable={participantsUnavailable} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} onCreateSession={() => { setView("sessions"); setSessionBuilderOpen(true); }} />;
     if (view === "analytics") return <AnalyticsView />;
     if (view === "roster") return <RosterView participants={participants ?? []} progressMap={progressMap} />;
     return null;

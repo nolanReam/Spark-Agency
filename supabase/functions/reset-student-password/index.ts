@@ -104,6 +104,22 @@ Deno.serve(async request => {
   }
   const resetId = parsedRequest.requestId;
 
+  const { data: ownedRequest, error: ownershipError } = await admin
+    .from("password_reset_requests")
+    .select("session_id, sessions!inner(instructor_id)")
+    .eq("id", resetId)
+    .maybeSingle();
+  if (ownershipError) {
+    logFailure("OWNERSHIP_PREFLIGHT_FAILED", resetId, instructorId);
+    return errorResponse(safeError("RESET_FAILED", 503), origin);
+  }
+  if (ownedRequest) {
+    const owningSession = ownedRequest.sessions as unknown as { instructor_id: string };
+    if (owningSession.instructor_id !== instructorId) {
+      return errorResponse(safeError("FORBIDDEN", 403), origin);
+    }
+  }
+
   const { data: claimData, error: claimRpcError } = await admin.rpc(
     "claim_password_reset_request",
     { p_request_id: resetId, p_instructor_id: instructorId },

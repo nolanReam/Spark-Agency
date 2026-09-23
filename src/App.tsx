@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useTheme } from "./hooks/useTheme";
 import { useAuth } from "./hooks/useAuth";
@@ -209,6 +209,15 @@ export default function App() {
   const { session, role, signIn, signInStaff, signOut } = useAuth();
   const [authScreen, setAuthScreen] = useState<AuthScreen>("sign-in");
   const [loginMode, setLoginMode] = useState<LoginMode>("student");
+  const previousUserId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const currentUserId = session?.user.id ?? null;
+    if (previousUserId.current !== currentUserId) {
+      queryClient.clear();
+      previousUserId.current = currentUserId;
+    }
+  }, [session?.user.id]);
 
   const showSignIn = (mode: LoginMode) => {
     setLoginMode(mode);

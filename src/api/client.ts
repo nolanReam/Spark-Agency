@@ -1,4 +1,5 @@
 import { createClient, FunctionsHttpError } from "@supabase/supabase-js";
+import { normalizeSessionParticipants } from "./sessionParticipants";
 
 const supabaseUrl = "https://oxiximaftgrpipqbrwej.supabase.co";
 const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im94aXhpbWFmdGdycGlwcWJyd2VqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2Mzc5ODUsImV4cCI6MjA5NzIxMzk4NX0.agyl0Ge416zGP3ZDV74rm9AazlON8s3T74tHrZJMWGQ";
@@ -248,8 +249,12 @@ export async function getStudentProfile(userId: string) {
 
 // ─── Cases ───────────────────────────────────────────────
 
-export async function getCases(status?: string, _orgId?: string) {
-  let q = supabase.from("cases").select("*").order("created_at", { ascending: false });
+export async function getCases(instructorId: string, status?: string) {
+  let q = supabase
+    .from("cases")
+    .select("*")
+    .eq("created_by", instructorId)
+    .order("created_at", { ascending: false });
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
   if (error) throw error;
@@ -295,20 +300,25 @@ export async function saveCaseBuilder(payload: CaseBuilderSavePayload): Promise<
 }
 
 export async function createCase(caseData: Partial<DbCase>) {
-  const { data, error } = await supabase.from("cases").insert(caseData).select().single();
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user) throw authError ?? new Error("Authentication required");
+  const safeCaseData = { ...caseData };
+  delete safeCaseData.created_by;
+  const { data, error } = await supabase
+    .from("cases")
+    .insert({ ...safeCaseData, created_by: authData.user.id })
+    .select()
+    .single();
   if (error) throw error;
   return data as DbCase;
 }
 
 export async function updateCase(caseId: string, updates: Partial<DbCase>) {
-  const { data, error } = await supabase.from("cases").update(updates).eq("id", caseId).select().single();
+  const safeUpdates = { ...updates };
+  delete safeUpdates.created_by;
+  const { data, error } = await supabase.from("cases").update(safeUpdates).eq("id", caseId).select().single();
   if (error) throw error;
   return data as DbCase;
-}
-
-export async function deleteCase(caseId: string) {
-  const { error } = await supabase.from("cases").delete().eq("id", caseId);
-  if (error) throw error;
 }
 
 // ─── Sessions ────────────────────────────────────────────
@@ -319,13 +329,15 @@ export function generateSessionCode(): string {
   return `AGENCY-${n}`;
 }
 
-export async function createSession(sessionCode: string, caseIds: string[], instructorId?: string, status: string = "draft") {
+export async function createSession(sessionCode: string, caseIds: string[], status: string = "draft") {
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  if (authError || !authData.user) throw authError ?? new Error("Authentication required");
   const { data, error } = await supabase
     .from("sessions")
     .insert({
       session_code: sessionCode,
       case_ids: caseIds,
-      instructor_id: instructorId || null,
+      instructor_id: authData.user.id,
       status,
     })
     .select()
@@ -345,22 +357,27 @@ export async function updateSessionStatus(sessionId: string, status: string) {
   return data as DbSession;
 }
 
-export async function getSessions() {
-  const { data, error } = await supabase.from("sessions").select("*").order("started_at", { ascending: false });
+export async function getSessions(instructorId: string) {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("instructor_id", instructorId)
+    .order("started_at", { ascending: false });
   if (error) throw error;
   return data as DbSession[];
 }
 
-export async function getActiveSession() {
+export async function getActiveSession(instructorId: string) {
   const { data, error } = await supabase
     .from("sessions")
     .select("*")
+    .eq("instructor_id", instructorId)
     .in("status", ["open", "active"])
     .order("started_at", { ascending: false })
     .limit(1)
-    .single();
+    .maybeSingle();
   // No session is not an error
-  if (error && error.code !== "PGRST116") throw error;
+  if (error) throw error;
   return data as DbSession | null;
 }
 
@@ -732,7 +749,7 @@ export interface EnrichedHelpRequest {
   id: string; student_id: string; case_id: string; case_progress_id: string | null;
   reason: string; raised_at: string;
   resolved_at: string | null; resolved_by: string | null;
-  student_name: string; case_title: string;
+  student_name: string; case_title: string; wait_minutes: number;
 }
 
 function mapEnrichedHelpRequests(data: Record<string, unknown>[] | null): EnrichedHelpRequest[] {
@@ -750,6 +767,10 @@ function mapEnrichedHelpRequests(data: Record<string, unknown>[] | null): Enrich
       resolved_by: f.resolved_by as string | null,
       student_name: (studentUser?.display_name ?? "Unknown") as string,
       case_title: (caseData?.title ?? "Untitled") as string,
+      wait_minutes: Math.max(
+        0,
+        Math.round((Date.now() - new Date(f.raised_at as string).getTime()) / 60_000),
+      ),
     } satisfies EnrichedHelpRequest;
   });
 }
@@ -764,22 +785,6 @@ export async function getEnrichedHelpRequests(sessionId: string) {
       cases!intervention_flags_case_id_fkey(title)
     `)
     .eq("case_progress.session_id", sessionId)
-    .is("resolved_at", null)
-    .order("raised_at", { ascending: true });
-
-  if (error) throw error;
-  return mapEnrichedHelpRequests(data as Record<string, unknown>[] | null);
-}
-
-/** Existing global instructor query; volunteer code must use the session-scoped query above. */
-export async function getGlobalEnrichedHelpRequests() {
-  const { data, error } = await supabase
-    .from("intervention_flags")
-    .select(`
-      id, student_id, case_id, case_progress_id, reason, raised_at, resolved_at, resolved_by,
-      users!intervention_flags_student_id_fkey(display_name),
-      cases!intervention_flags_case_id_fkey(title)
-    `)
     .is("resolved_at", null)
     .order("raised_at", { ascending: true });
 
@@ -952,8 +957,8 @@ export async function getSessionQueueHealth(sessionId: string) {
 export async function getSessionParticipants(sessionId: string) {
   const { data, error } = await supabase
     .from("session_participants")
-    .select("student_id, users!inner(id, display_name, role)")
+    .select("session_id, student_id, users(id, display_name, role)")
     .eq("session_id", sessionId);
   if (error) throw error;
-  return data;
+  return normalizeSessionParticipants(data, sessionId);
 }

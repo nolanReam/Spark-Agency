@@ -103,6 +103,8 @@ test("Edge Function logs cannot interpolate secrets or request bodies", async ()
     assert.equal(source.includes('Access-Control-Allow-Origin": "*"'), false);
   }
   assert.match(resetSource, /const studentId = claim\.student_id;/);
+  assert.match(resetSource, /sessions!inner\(instructor_id\)/);
+  assert.match(resetSource, /owningSession\.instructor_id !== instructorId/);
   assert.doesNotMatch(resetSource, /payload\.studentId|requestBody\.studentId/);
   assert.match(changeSource, /const studentId = callerData\.user\.id;/);
   assert.doesNotMatch(changeSource, /payload\.studentId|requestBody\.studentId/);

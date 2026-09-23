@@ -1,5 +1,5 @@
--- Phase 4B lifecycle tests. Run only against a disposable/local database
--- after migrations through 011. The transaction always rolls back.
+-- Phase 4B lifecycle tests with migration 012 ownership expectations. Run only
+-- against a disposable/local database after migrations through 012.
 
 BEGIN;
 
@@ -48,8 +48,8 @@ BEGIN
     'b4000000-0000-4000-8000-000000000031',
     'b4000000-0000-4000-8000-000000000002'
   );
-  IF claim.result_code <> 'RESET_ALREADY_PROCESSING' OR claim.attempt_count <> 1 THEN
-    RAISE EXCEPTION 'logical race assertion failed: %', row_to_json(claim);
+  IF claim.result_code <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'cross-instructor active claim was not forbidden: %', row_to_json(claim);
   END IF;
 END;
 $$;
@@ -162,7 +162,8 @@ BEGIN
 END;
 $$;
 
--- Claim request 31 again, age its lease, and reclaim with another instructor.
+-- Claim request 31 again, age its lease, reject another instructor, then let
+-- the owning instructor reclaim it.
 DO $$
 DECLARE
   claim record;
@@ -185,15 +186,24 @@ BEGIN
     'b4000000-0000-4000-8000-000000000031',
     'b4000000-0000-4000-8000-000000000002'
   );
+  IF claim.result_code <> 'FORBIDDEN' THEN
+    RAISE EXCEPTION 'cross-instructor stale lease claim was not forbidden: %', row_to_json(claim);
+  END IF;
+
+  SELECT * INTO claim
+  FROM public.claim_password_reset_request(
+    'b4000000-0000-4000-8000-000000000031',
+    'b4000000-0000-4000-8000-000000000001'
+  );
   IF claim.result_code <> 'CLAIMED' OR claim.attempt_count <> 3 THEN
-    RAISE EXCEPTION 'stale lease reclaim assertion failed: %', row_to_json(claim);
+    RAISE EXCEPTION 'owner stale lease reclaim assertion failed: %', row_to_json(claim);
   END IF;
   IF NOT EXISTS (
     SELECT 1 FROM public.password_reset_requests
     WHERE id = 'b4000000-0000-4000-8000-000000000031'
-      AND processing_by = 'b4000000-0000-4000-8000-000000000002'
+      AND processing_by = 'b4000000-0000-4000-8000-000000000001'
   ) THEN
-    RAISE EXCEPTION 'stale lease did not replace processing actor';
+    RAISE EXCEPTION 'stale lease did not retain the owning processing actor';
   END IF;
 END;
 $$;
@@ -202,7 +212,7 @@ DO $$
 BEGIN
   IF public.fail_password_reset_attempt(
     'b4000000-0000-4000-8000-000000000031',
-    'b4000000-0000-4000-8000-000000000002',
+    'b4000000-0000-4000-8000-000000000001',
     'auth_password_update_failed'
   ) <> 'failed'::public.password_reset_status THEN
     RAISE EXCEPTION 'final failure did not exhaust request';
