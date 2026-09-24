@@ -15,7 +15,7 @@ export function StudentProgress() {
 
   const isLoading = profileLoading || masteryLoading;
 
-  const clearanceLevel = profile?.clearance_level ?? 1;
+  const clearanceLevel = profile?.clearance_level ?? 0;
   const predictionAccuracy = Math.round(profile?.prediction_accuracy ?? 0);
   const casesCompleted = (progress ?? []).filter(p => p.state === "completed").length;
   const conceptsAt50 = (mastery ?? []).filter(m => m.mastery_pct >= 50).length;

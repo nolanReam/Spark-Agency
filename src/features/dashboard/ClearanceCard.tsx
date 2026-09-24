@@ -1,6 +1,6 @@
 import { Award, CheckCircle2 } from "lucide-react";
 import { Card, SectionLabel } from "../../components/ui";
-import { CLEARANCE_LEVELS } from "../../lib/constants";
+import { CASE_CLEARANCE_LEVELS } from "../../lib/constants";
 
 interface ClearanceCardProps {
   clearanceLevel: number;
@@ -10,8 +10,22 @@ interface ClearanceCardProps {
 }
 
 export function ClearanceCard({ clearanceLevel, predictionAccuracy, casesCompleted, conceptsAt50Count }: ClearanceCardProps) {
-  const currentLevel = CLEARANCE_LEVELS.find(l => l.level === clearanceLevel);
-  const nextLevel = CLEARANCE_LEVELS.find(l => l.level === clearanceLevel + 1);
+  if (clearanceLevel === 0) {
+    return (
+      <Card style={{ padding: "1.25rem" }}>
+        <SectionLabel icon={Award}>Clearance Level</SectionLabel>
+        <div style={{ marginTop: "0.6rem", fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.1rem", fontWeight: 700 }}>
+          Orientation
+        </div>
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: "0.4rem 0 0" }}>
+          Pass the Junior Developer Qualification to earn CL-1.
+        </p>
+      </Card>
+    );
+  }
+
+  const currentLevel = CASE_CLEARANCE_LEVELS.find(l => l.level === clearanceLevel);
+  const nextLevel = CASE_CLEARANCE_LEVELS.find(l => l.level === clearanceLevel + 1);
 
   if (!nextLevel) {
     return (

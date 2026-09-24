@@ -88,7 +88,7 @@ export function StudentHome({ sessionId, caseStage: _caseStage, reviewFeedback, 
 
   // Derived stats
   const displayName = (profile as any)?.display_name ?? user?.user_metadata?.display_name ?? "Student";
-  const clearanceLevel = profile?.clearance_level ?? 1;
+  const clearanceLevel = profile?.clearance_level ?? 0;
   const reputation = profile?.reputation_points ?? 0;
   const predictionAccuracy = Math.round(profile?.prediction_accuracy ?? 0);
   const casesCompleted = (progress ?? []).filter(p => p.state === "completed").length;

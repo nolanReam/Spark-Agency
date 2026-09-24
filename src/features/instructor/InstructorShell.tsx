@@ -4,7 +4,7 @@ import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field } from "../../co
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
-import { CONCEPTS, CLEARANCE_LEVELS } from "../../lib/constants";
+import { CASE_CLEARANCE_LEVELS, CONCEPTS } from "../../lib/constants";
 import {
   useCases, useCreateCase, useUpdateCase, useCaseBuilderAggregate, useSaveCaseBuilder,
   useSessions, useActiveSession, useSessionParticipants, useSessionQueueHealth,
@@ -375,8 +375,10 @@ function formToCaseBuilderPayload(f: CaseFormData, status: "draft" | "published"
 
 function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack: () => void }) {
   const isNew = !existing;
-  const aggregateQuery = useCaseBuilderAggregate(existing?.id ?? "");
-  const saveCaseBuilder = useSaveCaseBuilder();
+  const { user } = useAuth();
+  const instructorId = user?.id ?? "";
+  const aggregateQuery = useCaseBuilderAggregate(existing?.id ?? "", instructorId);
+  const saveCaseBuilder = useSaveCaseBuilder(instructorId);
   const [form, setForm] = useState<CaseFormData>(emptyCaseForm);
   const [hydrated, setHydrated] = useState(isNew);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -386,6 +388,7 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
 
   useEffect(() => {
     if (isNew) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the editor when switching from an existing case to a new case.
       setForm(emptyCaseForm());
       setPublishErrors({});
       setHydrated(true);
@@ -541,7 +544,7 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
                 <Field label={<CaseBuilderFieldLabel required>Min Clearance</CaseBuilderFieldLabel>} htmlFor="minimum-clearance">
                   <select id="minimum-clearance" aria-required="true" value={form.min_clearance} onChange={e => set("min_clearance", Number(e.target.value))} style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.875rem", fontFamily: "'IBM Plex Sans',sans-serif" }}>
-                    {CLEARANCE_LEVELS.map(l => <option key={l.level} value={l.level}>CL-{l.level} — {l.title}</option>)}
+                    {CASE_CLEARANCE_LEVELS.map(l => <option key={l.level} value={l.level}>CL-{l.level} — {l.title}</option>)}
                   </select>
                 </Field>
                 <Field
@@ -807,8 +810,11 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
   const [sessionCode, setSessionCode] = useState<string | null>(null);
   const [selectedCases, setSelectedCases] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const createSession = useCreateSession();
-  const publishedCases = cases.filter(c => c.status === "published");
+  const instructorId = user?.id ?? "";
+  const createSession = useCreateSession(instructorId);
+  const publishedCases = cases.filter(
+    c => c.status === "published" && c.created_by === instructorId,
+  );
   const toggleCase = (id: string) => { if (selectedCases.includes(id)) setSelectedCases(selectedCases.filter(c => c !== id)); else setSelectedCases([...selectedCases, id]); };
 
   const handleGenerateCode = () => {
@@ -822,7 +828,7 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
     if (!sessionCode || selectedCases.length === 0) return;
     setError(null);
     createSession.mutate(
-      { sessionCode, caseIds: selectedCases, instructorId: user?.id, status: "open" },
+      { sessionCode, caseIds: selectedCases, status: "open" },
       {
         onSuccess: () => onBack(),
         onError: (err) => {
@@ -908,14 +914,16 @@ function SessionBuilderView({ cases, onBack }: { cases: DbCase[]; onBack: () => 
 
 // ─── Session Monitor View ───────────────────────────────────────────
 
-function SessionMonitorView({ session, participants, queueHealth, helpRequests, onBack }: {
+function SessionMonitorView({ session, participants, queueHealth, helpRequests, onBack, onCreateSession }: {
   session: DbSession | null; participants: { student_id: string; display_name?: string; role?: string }[];
   queueHealth: { state: string }[]; helpRequests: EnrichedHelpRequest[]; onBack: (() => void) | null;
+  onCreateSession?: () => void;
 }) {
+  const { user } = useAuth();
   const [closing, setClosing] = useState(false);
   const [closed, setClosed] = useState(session?.status === "closed");
   const [isClosing, setIsClosing] = useState(false);
-  const updateStatus = useUpdateSessionStatus();
+  const updateStatus = useUpdateSessionStatus(user?.id ?? "");
 
   const studentsPresent = participants.filter(p => p.role === "student").length;
   const volunteersActive = participants.filter(p => p.role === "volunteer").length;
@@ -928,7 +936,21 @@ function SessionMonitorView({ session, participants, queueHealth, helpRequests, 
   const pendingHelp = helpRequests.length;
   const max = Math.max(...Object.values(stateCounts), 1);
 
-  const helpItems = helpRequests.map(h => ({ id: h.id, student: h.student_name, caseTitle: h.case_title, waitMin: Math.round((Date.now() - new Date(h.raised_at).getTime()) / 60_000), reason: h.reason }));
+  const helpItems = helpRequests.map(h => ({ id: h.id, student: h.student_name, caseTitle: h.case_title, waitMin: h.wait_minutes, reason: h.reason }));
+
+  if (!session) return (
+    <div>
+      <TopBar title="Operations" subtitle="No active session" />
+      <Card style={{ padding: "2rem", textAlign: "center" }}>
+        <Calendar size={28} color="var(--brand)" style={{ marginBottom: "0.75rem" }} />
+        <div style={{ fontWeight: 700, marginBottom: "0.35rem" }}>No active session</div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1rem" }}>
+          Create a session when you are ready to invite students and begin monitoring.
+        </p>
+        {onCreateSession && <Btn variant="primary" icon={Plus} onClick={onCreateSession}>Create Session</Btn>}
+      </Card>
+    </div>
+  );
 
   if (closed) return (
     <div>
@@ -1082,16 +1104,20 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
   const [sessionMonitorOpen, setSessionMonitorOpen] = useState(false);
   const [monitoringSession, setMonitoringSession] = useState<DbSession | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const { user } = useAuth();
+  const instructorId = user?.id ?? "";
 
   // Live data
-  const { data: cases, isLoading: casesLoading } = useCases();
-  const { data: sessions, isLoading: sessionsLoading } = useSessions();
-  const createCase = useCreateCase();
-  const updateCase = useUpdateCase();
-  const { data: activeSession } = useActiveSession();
-  const { data: participants } = useSessionParticipants(activeSession?.id ?? "");
-  const { data: queueHealth } = useSessionQueueHealth(activeSession?.id ?? "");
-  const { data: helpRequests } = useHelpRequests();
+  const { data: cases, isLoading: casesLoading } = useCases(instructorId);
+  const { data: sessions, isLoading: sessionsLoading } = useSessions(instructorId);
+  const createCase = useCreateCase(instructorId);
+  const updateCase = useUpdateCase(instructorId);
+  const { data: activeSession } = useActiveSession(instructorId);
+  const displayedSession = sessionMonitorOpen && monitoringSession ? monitoringSession : activeSession;
+  const displayedSessionId = displayedSession?.id ?? "";
+  const { data: participants } = useSessionParticipants(displayedSessionId, instructorId);
+  const { data: queueHealth } = useSessionQueueHealth(displayedSessionId, instructorId);
+  const { data: helpRequests } = useHelpRequests(displayedSessionId, instructorId);
 
   // Roster progress data - fetch all student progress for roster view
   // studentIds unused and removed to resolve compilation error
@@ -1185,7 +1211,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
         />
       );
     }
-    if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} />;
+    if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} onCreateSession={() => { setView("sessions"); setSessionBuilderOpen(true); }} />;
     if (view === "analytics") return <AnalyticsView />;
     if (view === "roster") return <RosterView participants={participants ?? []} progressMap={progressMap} />;
     return null;

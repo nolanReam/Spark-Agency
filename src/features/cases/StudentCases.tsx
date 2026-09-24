@@ -9,6 +9,7 @@ import {
   useCaseById,
   useSessionCases,
 } from "../../api/hooks";
+import { canAccessCase } from "../../lib/constants";
 // DbCase import removed
 
 const ACTIVE_PROGRESS_STATES = new Set([
@@ -37,11 +38,12 @@ export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }:
   const [completedOpen, setCompletedOpen] = useState<string | null>(null);
 
   // Data hooks
-  const { data: profile } = useStudentProfile(userId);
+  const profileQuery = useStudentProfile(userId);
+  const profile = profileQuery.data;
   const { data: progress, isLoading: progressLoading } = useStudentProgress(userId, sessionId);
   const { data: sessionCases, isLoading: casesLoading } = useSessionCases(sessionId);
 
-  const clearanceLevel = profile?.clearance_level ?? 1;
+  const clearanceLevel = profile?.clearance_level;
 
   // Derive active case from progress
   const activeProgress = (progress ?? []).find(p => ACTIVE_PROGRESS_STATES.has(p.state));
@@ -58,7 +60,7 @@ export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }:
   // Completed cases = published that are in the completed set
   const completedCases = (sessionCases ?? []).filter(c => completedCaseIds.has(c.id));
 
-  const loading = progressLoading || casesLoading;
+  const loading = profileQuery.isLoading || progressLoading || casesLoading;
 
   return (
     <div>
@@ -68,6 +70,12 @@ export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }:
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "3rem", color: "var(--text-muted)", gap: "0.5rem" }}>
           <Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> Loading cases…
         </div>
+      )}
+
+      {profileQuery.isError && (
+        <Card style={{ padding: "0.85rem 1rem", marginBottom: "1rem", color: "var(--danger)", border: "1px solid var(--danger)" }}>
+          Your clearance could not be loaded. Cases remain locked until it is available.
+        </Card>
       )}
 
       {!loading && (
@@ -108,7 +116,7 @@ export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }:
           ) : (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.85rem", marginBottom: "1.5rem" }}>
               {availableCases.map(c => {
-                const locked = clearanceLevel < (c.min_clearance ?? 1);
+                const locked = !canAccessCase(clearanceLevel, c.min_clearance ?? 1);
                 const blockedByActiveCase = !!activeCase && !locked;
                 return (
                   <Card key={c.id} style={{ padding: "1.1rem", opacity: locked || blockedByActiveCase ? 0.55 : 1, position: "relative", cursor: locked || blockedByActiveCase ? "default" : "pointer" }}
