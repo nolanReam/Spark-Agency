@@ -11,7 +11,7 @@ import { StudentCases } from "../cases/StudentCases";
 import { StudentProgress } from "../cases/StudentProgress";
 import { CaseWorkflow } from "../cases/CaseWorkflow";
 import type { StageKey } from "../../lib/constants";
-import { CLEARANCE_LEVELS } from "../../lib/constants";
+import { getClearanceTitle } from "../../lib/constants";
 
 const ACTIVE_PROGRESS_STATES = new Set([
   "building",
@@ -85,7 +85,8 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const [readOnly, setReadOnly] = useState(false);
 
   // Live data for sidebar
-  const { data: profile } = useStudentProfile(userId);
+  const profileQuery = useStudentProfile(userId);
+  const profile = profileQuery.data;
   const joinedSessionQuery = useJoinedLiveSession(userId);
   const joinedSession = joinedSessionQuery.data;
   const { data: progress } = useStudentProgress(userId, joinedSession?.id, !!joinedSession?.id);
@@ -93,8 +94,12 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const lowerHand = useLowerHand();
   const createCaseProgress = useCreateCaseProgress();
 
-  const clearanceLevel = profile?.clearance_level ?? 1;
-  const clearanceTitle = CLEARANCE_LEVELS.find(l => l.level === clearanceLevel)?.title ?? "Developer";
+  const clearanceLevel = profile?.clearance_level;
+  const clearanceTitle = profileQuery.isLoading
+    ? "Loading…"
+    : profileQuery.isError || clearanceLevel === undefined
+      ? "Unavailable"
+      : getClearanceTitle(clearanceLevel) ?? "Unavailable";
   const sessionTitle = joinedSession?.session_code ?? "No active session";
   const sessionStatus = joinedSession?.status ?? "unknown";
 
@@ -208,7 +213,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
       <Card style={{ padding: "0.85rem" }}>
         <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.3rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Clearance Level</div>
         <div style={{ display: "flex", alignItems: "baseline", gap: "0.35rem" }}>
-          <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.6rem", fontWeight: 700 }}>{clearanceLevel}</span>
+          <span style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.6rem", fontWeight: 700 }}>{clearanceLevel ?? "—"}</span>
           <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>— {clearanceTitle}</span>
         </div>
       </Card>

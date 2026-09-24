@@ -4,7 +4,7 @@ import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field } from "../../co
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
 import type { UserRole } from "../../hooks/useAuth";
-import { CONCEPTS, CLEARANCE_LEVELS } from "../../lib/constants";
+import { CASE_CLEARANCE_LEVELS, CONCEPTS } from "../../lib/constants";
 import {
   useCases, useCreateCase, useUpdateCase, useCaseBuilderAggregate, useSaveCaseBuilder,
   useSessions, useActiveSession, useSessionParticipants, useSessionQueueHealth,
@@ -388,6 +388,7 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
 
   useEffect(() => {
     if (isNew) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the editor when switching from an existing case to a new case.
       setForm(emptyCaseForm());
       setPublishErrors({});
       setHydrated(true);
@@ -543,7 +544,7 @@ function CaseBuilderForm({ existing, onBack }: { existing: DbCase | null; onBack
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
                 <Field label={<CaseBuilderFieldLabel required>Min Clearance</CaseBuilderFieldLabel>} htmlFor="minimum-clearance">
                   <select id="minimum-clearance" aria-required="true" value={form.min_clearance} onChange={e => set("min_clearance", Number(e.target.value))} style={{ width: "100%", padding: "0.6rem 0.8rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.875rem", fontFamily: "'IBM Plex Sans',sans-serif" }}>
-                    {CLEARANCE_LEVELS.map(l => <option key={l.level} value={l.level}>CL-{l.level} — {l.title}</option>)}
+                    {CASE_CLEARANCE_LEVELS.map(l => <option key={l.level} value={l.level}>CL-{l.level} — {l.title}</option>)}
                   </select>
                 </Field>
                 <Field

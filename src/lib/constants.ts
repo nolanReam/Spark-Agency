@@ -4,13 +4,38 @@ export const CONCEPTS = [
 ] as const;
 export type Concept = typeof CONCEPTS[number];
 
-export const CLEARANCE_LEVELS = [
-  { level: 1, title: "Junior Developer", casesRequired: 0,  accuracy: 0,  conceptsAt50: 0 },
-  { level: 2, title: "Developer",        casesRequired: 3,  accuracy: 50, conceptsAt50: 1 },
-  { level: 3, title: "Senior Developer", casesRequired: 7,  accuracy: 60, conceptsAt50: 3 },
-  { level: 4, title: "Lead Developer",   casesRequired: 14, accuracy: 70, conceptsAt50: 5 },
-  { level: 5, title: "Architect",        casesRequired: 25, accuracy: 80, conceptsAt50: 7 },
+export const STUDENT_CLEARANCE_LABELS = {
+  0: "Orientation",
+  1: "Junior Developer",
+  2: "Developer",
+  3: "Senior Developer",
+  4: "Lead Developer",
+  5: "Architect",
+} as const;
+
+export type ClearanceLevel = keyof typeof STUDENT_CLEARANCE_LABELS;
+
+export function getClearanceTitle(level: number): string | null {
+  return STUDENT_CLEARANCE_LABELS[level as ClearanceLevel] ?? null;
+}
+
+// Case Files require earned clearance. Orientation is deliberately excluded.
+export const CASE_CLEARANCE_LEVELS = [
+  { level: 1, title: STUDENT_CLEARANCE_LABELS[1], casesRequired: 0,  accuracy: 0,  conceptsAt50: 0 },
+  { level: 2, title: STUDENT_CLEARANCE_LABELS[2], casesRequired: 3,  accuracy: 50, conceptsAt50: 1 },
+  { level: 3, title: STUDENT_CLEARANCE_LABELS[3], casesRequired: 7,  accuracy: 60, conceptsAt50: 3 },
+  { level: 4, title: STUDENT_CLEARANCE_LABELS[4], casesRequired: 14, accuracy: 70, conceptsAt50: 5 },
+  { level: 5, title: STUDENT_CLEARANCE_LABELS[5], casesRequired: 25, accuracy: 80, conceptsAt50: 7 },
 ] as const;
+
+export function canAccessCase(
+  clearanceLevel: number | null | undefined,
+  minimumClearance: number,
+): boolean {
+  return typeof clearanceLevel === "number"
+    && Number.isInteger(clearanceLevel)
+    && clearanceLevel >= minimumClearance;
+}
 
 export const STAGES = [
   { key: "building",                    label: "Building" },
