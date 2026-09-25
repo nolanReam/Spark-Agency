@@ -53,10 +53,10 @@ function joinErrorMessage(error: Error): string {
   return "Could not join the session. Please check the code and try again.";
 }
 
-function VolunteerJoinSession() {
+function VolunteerJoinSession({ userId }: { userId: string }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const joinSession = useJoinSession();
+  const joinSession = useJoinSession(userId);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -292,7 +292,7 @@ export function VolunteerShell({ role, theme, setTheme, onSignOut }: {
     );
   }
 
-  if (!joinedSession) return <VolunteerJoinSession />;
+  if (!joinedSession) return <VolunteerJoinSession userId={userId} />;
 
   // Derive queue items from enriched data
   const allQueue: QueueItem[] = (enrichedReviews ?? []).map(reviewToItem);

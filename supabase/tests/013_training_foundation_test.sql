@@ -140,9 +140,152 @@ INSERT INTO public.sessions (id, instructor_id, session_code, status) VALUES
 INSERT INTO public.session_participants (session_id, student_id) VALUES
   ('d1300000-0000-4000-8000-000000000041', 'd1300000-0000-4000-8000-000000000011'),
   ('d1300000-0000-4000-8000-000000000041', 'd1300000-0000-4000-8000-000000000021'),
+  ('d1300000-0000-4000-8000-000000000041', 'd1300000-0000-4000-8000-000000000013'),
   ('d1300000-0000-4000-8000-000000000042', 'd1300000-0000-4000-8000-000000000012'),
   ('d1300000-0000-4000-8000-000000000042', 'd1300000-0000-4000-8000-000000000022'),
   ('d1300000-0000-4000-8000-000000000043', 'd1300000-0000-4000-8000-000000000011');
+
+-- Orientation is persisted, does not grant CL1, and gates the seeded first
+-- qualification until all three sections are complete.
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'd1300000-0000-4000-8000-000000000011', true);
+SELECT set_config(
+  'request.jwt.claims',
+  '{"sub":"d1300000-0000-4000-8000-000000000011","role":"authenticated","app_metadata":{"role":"student"}}',
+  true
+);
+DO $$
+BEGIN
+  BEGIN
+    PERFORM public.start_qualification(
+      '01300000-0000-4000-8000-000000000001',
+      'd1300000-0000-4000-8000-000000000041'
+    );
+    RAISE EXCEPTION 'Junior qualification started before Orientation';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+
+  PERFORM public.complete_orientation_section('how-spark-works');
+  PERFORM public.complete_orientation_section('scratch-basics');
+  PERFORM public.complete_orientation_section('build-test-explain');
+
+  IF (
+    SELECT clearance_level FROM public.student_profiles
+    WHERE user_id = 'd1300000-0000-4000-8000-000000000011'
+  ) IS DISTINCT FROM 0 THEN
+    RAISE EXCEPTION 'Orientation completion granted CL1';
+  END IF;
+
+  IF (
+    SELECT orientation_completed_at IS NULL
+      OR NOT orientation_sections_completed @> ARRAY[
+        'how-spark-works', 'scratch-basics', 'build-test-explain'
+      ]::text[]
+    FROM public.student_profiles
+    WHERE user_id = 'd1300000-0000-4000-8000-000000000011'
+  ) THEN
+    RAISE EXCEPTION 'Orientation completion was not persisted';
+  END IF;
+
+  PERFORM public.start_qualification(
+    '01300000-0000-4000-8000-000000000001',
+    'd1300000-0000-4000-8000-000000000041'
+  );
+END;
+$$;
+RESET ROLE;
+
+-- Direct Data API/RLS bypass attempts must honor trusted clearance, assignment,
+-- and live-session membership.
+INSERT INTO public.cases (
+  id, case_code, title, min_clearance, status, created_by
+) VALUES
+  ('d1300000-0000-4000-8000-000000000601', 'TRAIN-CL1', 'Training CL1 Case', 1, 'published', 'd1300000-0000-4000-8000-000000000001'),
+  ('d1300000-0000-4000-8000-000000000602', 'TRAIN-CL2', 'Training CL2 Case', 2, 'published', 'd1300000-0000-4000-8000-000000000002'),
+  ('d1300000-0000-4000-8000-000000000603', 'TRAIN-UNASSIGNED', 'Unassigned CL1 Case', 1, 'published', 'd1300000-0000-4000-8000-000000000002');
+
+UPDATE public.sessions
+SET case_ids = CASE id
+  WHEN 'd1300000-0000-4000-8000-000000000041'::uuid THEN ARRAY['d1300000-0000-4000-8000-000000000601'::uuid]
+  WHEN 'd1300000-0000-4000-8000-000000000042'::uuid THEN ARRAY[
+    'd1300000-0000-4000-8000-000000000601'::uuid,
+    'd1300000-0000-4000-8000-000000000602'::uuid
+  ]
+  ELSE case_ids
+END
+WHERE id IN (
+  'd1300000-0000-4000-8000-000000000041',
+  'd1300000-0000-4000-8000-000000000042'
+);
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'd1300000-0000-4000-8000-000000000011', true);
+SELECT set_config('request.jwt.claims', '{"sub":"d1300000-0000-4000-8000-000000000011","role":"authenticated","app_metadata":{"role":"student"}}', true);
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+      'd1300000-0000-4000-8000-000000000011',
+      'd1300000-0000-4000-8000-000000000601',
+      'd1300000-0000-4000-8000-000000000041',
+      'building'
+    );
+    RAISE EXCEPTION 'CL0 student created CL1 Case progress';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'd1300000-0000-4000-8000-000000000012', true);
+SELECT set_config('request.jwt.claims', '{"sub":"d1300000-0000-4000-8000-000000000012","role":"authenticated","app_metadata":{"role":"student"}}', true);
+INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+  'd1300000-0000-4000-8000-000000000012',
+  'd1300000-0000-4000-8000-000000000601',
+  'd1300000-0000-4000-8000-000000000042',
+  'building'
+);
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+      'd1300000-0000-4000-8000-000000000012', 'd1300000-0000-4000-8000-000000000602',
+      'd1300000-0000-4000-8000-000000000042', 'building'
+    );
+    RAISE EXCEPTION 'CL1 student created CL2 Case progress';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+      'd1300000-0000-4000-8000-000000000012', 'd1300000-0000-4000-8000-000000000603',
+      'd1300000-0000-4000-8000-000000000042', 'building'
+    );
+    RAISE EXCEPTION 'Student created progress for an unassigned Case';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+      'd1300000-0000-4000-8000-000000000012', 'd1300000-0000-4000-8000-000000000601',
+      'd1300000-0000-4000-8000-000000000041', 'building'
+    );
+    RAISE EXCEPTION 'Student created progress without Session membership';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+RESET ROLE;
+
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', 'd1300000-0000-4000-8000-000000000013', true);
+SELECT set_config('request.jwt.claims', '{"sub":"d1300000-0000-4000-8000-000000000013","role":"authenticated","app_metadata":{"role":"student"}}', true);
+DO $$ BEGIN
+  BEGIN
+    INSERT INTO public.case_progress (student_id, case_id, session_id, state) VALUES (
+      'd1300000-0000-4000-8000-000000000013', 'd1300000-0000-4000-8000-000000000601',
+      'd1300000-0000-4000-8000-000000000041', 'building'
+    );
+    RAISE EXCEPTION 'Student without a profile created Case progress';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+RESET ROLE;
 
 INSERT INTO public.skills (
   id, code, name, description, display_order
@@ -1001,6 +1144,13 @@ BEGIN
   EXCEPTION WHEN object_not_in_prerequisite_state THEN NULL;
   END;
 
+  PERFORM public.save_qualification_evidence(
+    attempt.id,
+    'https://scratch.mit.edu/projects/130001/',
+    'I changed the sprite movement.',
+    'I used the green flag and restarted twice.',
+    '{"green_flag_starts":true,"sprite_moves_across_stage":true,"message_after_moving":true,"personal_change_tested":true}'::jsonb
+  );
   attempt := public.submit_qualification(attempt.id);
 
   BEGIN
@@ -1163,6 +1313,11 @@ BEGIN
     'd1300000-0000-4000-8000-000000000304',
     'd1300000-0000-4000-8000-000000000041'
   );
+  PERFORM public.save_qualification_evidence(
+    attempt.id, 'https://scratch.mit.edu/projects/130002/',
+    'I added a sound.', 'I ran it twice.',
+    '{"green_flag_starts":true,"sprite_moves_across_stage":true,"message_after_moving":true,"personal_change_tested":true}'::jsonb
+  );
   PERFORM public.submit_qualification(attempt.id);
 END;
 $$;
@@ -1213,6 +1368,11 @@ BEGIN
   attempt := public.start_qualification(
     'd1300000-0000-4000-8000-000000000304',
     'd1300000-0000-4000-8000-000000000041'
+  );
+  PERFORM public.save_qualification_evidence(
+    attempt.id, 'https://scratch.mit.edu/projects/130003/',
+    'I changed the color.', 'I ran it twice.',
+    '{"green_flag_starts":true,"sprite_moves_across_stage":true,"message_after_moving":true,"personal_change_tested":true}'::jsonb
   );
   PERFORM public.submit_qualification(attempt.id);
 END;
@@ -1265,6 +1425,11 @@ BEGIN
     'd1300000-0000-4000-8000-000000000304',
     'd1300000-0000-4000-8000-000000000041'
   );
+  PERFORM public.save_qualification_evidence(
+    attempt.id, 'https://scratch.mit.edu/projects/130004/',
+    'I changed the move.', 'I ran it twice.',
+    '{"green_flag_starts":true,"sprite_moves_across_stage":true,"message_after_moving":true,"personal_change_tested":true}'::jsonb
+  );
   PERFORM public.submit_qualification(attempt.id);
 END;
 $$;
@@ -1315,6 +1480,11 @@ BEGIN
   attempt := public.start_qualification(
     'd1300000-0000-4000-8000-000000000303',
     'd1300000-0000-4000-8000-000000000041'
+  );
+  PERFORM public.save_qualification_evidence(
+    attempt.id, 'https://scratch.mit.edu/projects/130005/',
+    'I changed the sprite.', 'I ran it twice.',
+    '{"green_flag_starts":true,"sprite_moves_across_stage":true,"message_after_moving":true,"personal_change_tested":true}'::jsonb
   );
   PERFORM public.submit_qualification(attempt.id);
 END;

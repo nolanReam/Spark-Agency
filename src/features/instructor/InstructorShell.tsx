@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ElementType, type ReactNode } from "react";
-import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, CheckSquare, RotateCcw } from "lucide-react";
+import { Activity, Layers, Calendar, BarChart3, Users, ShieldCheck, StopCircle, AlertCircle, UserCheck, Inbox, HelpCircle, CheckCircle2, Plus, Copy, Archive, Pencil, PlayCircle, Layers3, FileText, Target, Wrench, ListChecks, TrendingUp, Lock, ArrowRight, Lightbulb, X, Loader2, Eye, CheckSquare, RotateCcw, GraduationCap } from "lucide-react";
 import { Badge, Card, Btn, SectionLabel, Input, Textarea, Field } from "../../components/ui";
 import { TopBar, Sidebar } from "../../components/layout";
 import { useAuth } from "../../hooks/useAuth";
@@ -12,6 +12,7 @@ import {
 } from "../../api/hooks";
 import type { CaseBuilderSavePayload, DbCase, DbCaseConceptWeight, DbCaseLane, DbSession, EnrichedHelpRequest } from "../../api/client";
 import { generateSessionCode } from "../../api/client";
+import { QualificationReviewQueue } from "../training/QualificationReviewQueue";
 
 // ─── Shared helpers ─────────────────────────────────────────────────
 
@@ -1138,6 +1139,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
     { key: "operations", label: "Operations", icon: Activity },
     { key: "cases", label: "Case Builder", icon: Layers },
     { key: "sessions", label: "Sessions", icon: Calendar },
+    { key: "training", label: "Training Reviews", icon: GraduationCap },
     { key: "analytics", label: "Analytics", icon: BarChart3 },
     { key: "roster", label: "Roster", icon: Users },
   ];
@@ -1220,6 +1222,7 @@ export function InstructorShell({ role, theme, setTheme, onSignOut }: {
       );
     }
     if (view === "operations") return <SessionMonitorView session={activeSession ?? null} participants={participants ?? []} participantsUnavailable={participantsUnavailable} queueHealth={queueHealth ?? []} helpRequests={helpRequests ?? []} onBack={null} onCreateSession={() => { setView("sessions"); setSessionBuilderOpen(true); }} />;
+    if (view === "training") return <QualificationReviewQueue instructorId={instructorId} />;
     if (view === "analytics") return <AnalyticsView />;
     if (view === "roster") return <RosterView participants={participants ?? []} progressMap={progressMap} />;
     return null;

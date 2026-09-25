@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { FormEvent } from "react";
-import { LayoutDashboard, FileText, GraduationCap, Users, Loader2 } from "lucide-react";
+import { LayoutDashboard, FileText, GraduationCap, Users, Loader2, BookOpenCheck } from "lucide-react";
 import { Sidebar } from "../../components/layout";
 import { Card, Btn, Input } from "../../components/ui";
 import { useAuth } from "../../hooks/useAuth";
@@ -12,6 +12,7 @@ import { StudentProgress } from "../cases/StudentProgress";
 import { CaseWorkflow } from "../cases/CaseWorkflow";
 import type { StageKey } from "../../lib/constants";
 import { getClearanceTitle } from "../../lib/constants";
+import { StudentTraining } from "../training/StudentTraining";
 
 const ACTIVE_PROGRESS_STATES = new Set([
   "building",
@@ -34,10 +35,10 @@ function joinErrorMessage(error: Error): string {
   return "Could not join the session. Please check the code and try again.";
 }
 
-function StudentJoinSession() {
+function StudentJoinSession({ userId }: { userId: string }) {
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const joinSession = useJoinSession();
+  const joinSession = useJoinSession(userId);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -76,7 +77,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const { user } = useAuth();
   const userId = user?.id ?? "";
 
-  const [view, setView] = useState("home");
+  const [selectedView, setSelectedView] = useState<string | null>(null);
   const [caseStage, setCaseStage] = useState<StageKey>("impl_review_requested");
   const [handError, setHandError] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -92,9 +93,11 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const { data: progress } = useStudentProgress(userId, joinedSession?.id, !!joinedSession?.id);
   const raiseHand = useRaiseHand();
   const lowerHand = useLowerHand();
-  const createCaseProgress = useCreateCaseProgress();
+  const createCaseProgress = useCreateCaseProgress(userId);
 
   const clearanceLevel = profile?.clearance_level;
+  const view = selectedView ?? (clearanceLevel === 0 ? "training" : "home");
+  const setView = (nextView: string) => setSelectedView(nextView);
   const clearanceTitle = profileQuery.isLoading
     ? "Loading…"
     : profileQuery.isError || clearanceLevel === undefined
@@ -111,14 +114,6 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
   const handRaised = !!activeRaiseHand;
   const handPending = raiseHand.isPending || lowerHand.isPending;
 
-  useEffect(() => {
-    if (!joinedSession?.id) return;
-    setView("home");
-    setWorkflowCaseId(null);
-    setReadOnly(false);
-    setStartError(null);
-  }, [joinedSession?.id]);
-
   if (!userId || joinedSessionQuery.isLoading) {
     return <main style={{ flex: 1, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem", color: "var(--text-muted)" }}><Loader2 size={18} style={{ animation: "spin 1s linear infinite" }} /> Loading session…</main>;
   }
@@ -134,7 +129,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
     );
   }
 
-  if (!joinedSession) return <StudentJoinSession />;
+  if (!joinedSession) return <StudentJoinSession userId={userId} />;
 
   const handleRaiseHand = () => {
     setHandError(false);
@@ -196,6 +191,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
 
   const navItems = [
     { key: "home", label: "Home", icon: LayoutDashboard },
+    { key: "training", label: clearanceLevel === 0 ? "Orientation" : "Training", icon: BookOpenCheck },
     { key: "cases", label: "Cases", icon: FileText },
     { key: "progress", label: "Progress", icon: GraduationCap },
   ];
@@ -240,6 +236,7 @@ export function StudentShell({ role, theme, setTheme, onSignOut }: {
       <Sidebar items={navItems} view={view} setView={setView} role={role} theme={theme} setTheme={setTheme} bottomContent={bottomContent} onSignOut={onSignOut} />
       <main style={{ flex: 1, padding: "1.75rem 2.25rem", overflow: "auto" }}>
         {view === "home" && <StudentHome sessionId={joinedSession.id} caseStage={caseStage} reviewFeedback={reviewFeedback} onOpenCase={() => { setReadOnly(false); setWorkflowCaseId(null); setView("case-detail"); }} onGoToCases={() => setView("cases")} />}
+        {view === "training" && <StudentTraining userId={userId} sessionId={joinedSession.id} />}
         {view === "cases" && (
           <>
             {startError && (

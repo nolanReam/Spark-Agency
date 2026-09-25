@@ -20,4 +20,21 @@ export const instructorQueryKeys = {
     [...instructorQueryKeys.session(userId, sessionId), "queue-health"] as const,
   helpRequests: (userId: string, sessionId: string) =>
     [...instructorQueryKeys.session(userId, sessionId), "help-requests"] as const,
+  qualificationQueue: (userId: string) =>
+    [...instructorQueryKeys.root(userId), "qualification-queue"] as const,
+};
+
+export const studentQueryKeys = {
+  root: (userId: string) => ["student", userId] as const,
+  profile: (userId: string) => [...studentQueryKeys.root(userId), "profile"] as const,
+  joinedSession: (userId: string) =>
+    [...studentQueryKeys.root(userId), "joined-live-session"] as const,
+  progress: (userId: string, sessionId?: string) =>
+    [...studentQueryKeys.root(userId), "progress", sessionId ?? "all"] as const,
+  juniorQualification: (userId: string) =>
+    [...studentQueryKeys.root(userId), "junior-qualification"] as const,
+};
+
+export const trainingQueryKeys = {
+  juniorDefinition: ["training", "junior-qualification-definition"] as const,
 };

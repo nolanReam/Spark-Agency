@@ -159,7 +159,8 @@ BEGIN
   END IF;
 
   FOREACH expected_table IN ARRAY ARRAY[
-    'clearance_level', 'reputation_points', 'prediction_accuracy'
+    'clearance_level', 'reputation_points', 'prediction_accuracy',
+    'orientation_sections_completed', 'orientation_completed_at'
   ] LOOP
     IF has_column_privilege(
       'authenticated', 'public.student_profiles', expected_table, 'UPDATE'
@@ -181,6 +182,7 @@ BEGIN
   END LOOP;
 
   FOREACH signature IN ARRAY ARRAY[
+    'public.complete_orientation_section(text)',
     'public.start_training_mission(uuid)',
     'public.set_training_mission_step(uuid,integer)',
     'public.submit_training_mission_for_verification(uuid,uuid)',
@@ -188,6 +190,7 @@ BEGIN
     'public.return_training_mission(uuid,text)',
     'public.instructor_verify_skill(uuid,uuid,uuid,text)',
     'public.start_qualification(uuid,uuid)',
+    'public.save_qualification_evidence(uuid,text,text,text,jsonb)',
     'public.submit_qualification(uuid)',
     'public.review_qualification(uuid,jsonb,text,text)'
   ] LOOP
@@ -225,7 +228,9 @@ BEGIN
     'verify_training_mission',
     'return_training_mission',
     'instructor_verify_skill',
+    'complete_orientation_section',
     'start_qualification',
+    'save_qualification_evidence',
     'submit_qualification',
     'review_qualification',
     'current_reconciled_role',
@@ -266,6 +271,45 @@ BEGIN
       AND cmd = 'SELECT'
   ) <> 8 THEN
     RAISE EXCEPTION 'Expected one SELECT policy on each Migration 013 table';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM public.qualification_definitions
+    WHERE code = 'junior-developer-qualification'
+      AND target_clearance = 1
+      AND requires_orientation
+      AND status = 'published'
+      AND jsonb_array_length(rubric) = 4
+      AND requirements->>'starter_project_url'
+        = 'https://scratch.mit.edu/projects/1384855314/'
+      AND EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(requirements->'student_steps') AS step(value)
+        WHERE step.value = 'Click Remix to save a copy in your Scratch account.'
+      )
+      AND requirements->'checks' = jsonb_build_array(
+        jsonb_build_object('code', 'green_flag_starts', 'label', 'The green flag starts the project correctly.'),
+        jsonb_build_object('code', 'sprite_moves_across_stage', 'label', 'The sprite moves across the Stage.'),
+        jsonb_build_object('code', 'message_after_moving', 'label', 'The sprite says a message after moving.'),
+        jsonb_build_object('code', 'personal_change_tested', 'label', 'I added and tested one change of my own.')
+      )
+  ) THEN
+    RAISE EXCEPTION 'Published Junior Developer Qualification seed is missing';
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'case_progress'
+      AND policyname = 'progress_insert_student'
+      AND cmd = 'INSERT'
+      AND with_check ILIKE '%student_profiles%'
+      AND with_check ILIKE '%clearance_level%'
+      AND with_check ILIKE '%min_clearance%'
+  ) THEN
+    RAISE EXCEPTION 'Case progress INSERT policy does not enforce trusted clearance';
   END IF;
 END;
 $$;

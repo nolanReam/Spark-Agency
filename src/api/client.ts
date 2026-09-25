@@ -153,6 +153,59 @@ export interface DbStudentProfile {
   user_id: string; grade: number | null; age: number | null; interests: string[];
   clearance_level: number; reputation_points: number; prediction_accuracy: number;
   guardian_contact: string | null;
+  orientation_sections_completed: string[];
+  orientation_completed_at: string | null;
+}
+
+export type QualificationAttemptStatus =
+  | "in_progress"
+  | "awaiting_review"
+  | "needs_retry"
+  | "passed";
+
+export interface DbQualificationDefinition {
+  id: string;
+  code: string;
+  title: string;
+  description: string;
+  target_clearance: number;
+  requires_orientation: boolean;
+  task_brief: string;
+  requirements: {
+    starter_project_url?: string;
+    starter_behavior?: string[];
+    student_steps?: string[];
+    checks?: Array<{ code: string; label: string }>;
+  };
+  rubric: Array<{ code: string; label: string }>;
+  sequence_order: number;
+  status: "draft" | "published" | "archived";
+}
+
+export interface DbQualificationAttempt {
+  id: string;
+  student_id: string;
+  qualification_id: string;
+  session_id: string;
+  attempt_number: number;
+  status: QualificationAttemptStatus;
+  project_url: string | null;
+  change_summary: string | null;
+  testing_summary: string | null;
+  check_results: Record<string, boolean>;
+  criterion_results: Record<string, boolean>;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  feedback: string | null;
+  submitted_at: string | null;
+  started_at: string;
+  updated_at: string;
+}
+
+export interface QualificationReviewItem extends DbQualificationAttempt {
+  qualification: DbQualificationDefinition;
+  student_name: string;
+  session_code: string;
 }
 
 export interface DbCase {
@@ -245,6 +298,121 @@ export async function getStudentProfile(userId: string) {
 
   if (error) throw error;
   return data as DbStudentProfile;
+}
+
+// ─── Orientation & Qualification ─────────────────────────
+
+export async function completeOrientationSection(sectionCode: string) {
+  const { data, error } = await supabase.rpc("complete_orientation_section", {
+    p_section_code: sectionCode,
+  });
+  if (error) throw error;
+  return data as DbStudentProfile;
+}
+
+export async function getJuniorQualification() {
+  const { data, error } = await supabase
+    .from("qualification_definitions")
+    .select("*")
+    .eq("code", "junior-developer-qualification")
+    .eq("status", "published")
+    .single();
+  if (error) throw error;
+  return data as DbQualificationDefinition;
+}
+
+export async function getStudentQualificationAttempt(studentId: string) {
+  const { data, error } = await supabase
+    .from("student_qualification_attempts")
+    .select("*, qualification:qualification_definitions!inner(code, status)")
+    .eq("student_id", studentId)
+    .eq("qualification_definitions.code", "junior-developer-qualification")
+    .eq("qualification_definitions.status", "published")
+    .order("attempt_number", { ascending: false })
+    .limit(1);
+  if (error) throw error;
+  return (data?.[0] as DbQualificationAttempt | undefined) ?? null;
+}
+
+export async function startJuniorQualification(qualificationId: string, sessionId: string) {
+  const { data, error } = await supabase.rpc("start_qualification", {
+    p_qualification_id: qualificationId,
+    p_session_id: sessionId,
+  });
+  if (error) throw error;
+  return data as DbQualificationAttempt;
+}
+
+export interface QualificationEvidenceInput {
+  attemptId: string;
+  projectUrl: string;
+  changeSummary: string;
+  testingSummary: string;
+  checkResults: Record<string, boolean>;
+}
+
+export async function saveQualificationEvidence(input: QualificationEvidenceInput) {
+  const { data, error } = await supabase.rpc("save_qualification_evidence", {
+    p_attempt_id: input.attemptId,
+    p_project_url: input.projectUrl,
+    p_change_summary: input.changeSummary,
+    p_testing_summary: input.testingSummary,
+    p_check_results: input.checkResults,
+  });
+  if (error) throw error;
+  return data as DbQualificationAttempt;
+}
+
+export async function submitQualification(attemptId: string) {
+  const { data, error } = await supabase.rpc("submit_qualification", {
+    p_attempt_id: attemptId,
+  });
+  if (error) throw error;
+  return data as DbQualificationAttempt;
+}
+
+export async function getQualificationReviewQueue(): Promise<QualificationReviewItem[]> {
+  const { data, error } = await supabase
+    .from("student_qualification_attempts")
+    .select(`
+      *,
+      qualification:qualification_definitions!inner(*),
+      student:users!student_qualification_attempts_student_id_fkey(display_name),
+      session:sessions!student_qualification_attempts_session_id_fkey(session_code)
+    `)
+    .eq("status", "awaiting_review")
+    .order("submitted_at", { ascending: true });
+  if (error) throw error;
+
+  return (data ?? []).map(row => {
+    const student = Array.isArray(row.student) ? row.student[0] : row.student;
+    const session = Array.isArray(row.session) ? row.session[0] : row.session;
+    const qualification = Array.isArray(row.qualification)
+      ? row.qualification[0]
+      : row.qualification;
+    return {
+      ...row,
+      qualification,
+      student_name: student?.display_name ?? "Student",
+      session_code: session?.session_code ?? "Session",
+    } as QualificationReviewItem;
+  });
+}
+
+export async function reviewQualification(input: {
+  attemptId: string;
+  criterionResults: Record<string, boolean>;
+  outcome: "needs_retry" | "passed";
+  feedback?: string;
+}) {
+  const { data, error } = await supabase.rpc("review_qualification", {
+    p_attempt_id: input.attemptId,
+    p_criterion_results: input.criterionResults,
+    p_outcome: input.outcome,
+    p_feedback: input.feedback ?? null,
+  });
+  if (error) throw error;
+  return data as DbQualificationAttempt;
 }
 
 // ─── Cases ───────────────────────────────────────────────

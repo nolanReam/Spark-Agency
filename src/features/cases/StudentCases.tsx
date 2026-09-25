@@ -132,6 +132,15 @@ export function StudentCases({ sessionId, onOpenCase, onStartCase, onViewCase }:
                       <Badge tone="accent">+{c.reputation_reward} rep</Badge>
                       <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>~{c.estimated_minutes} min</span>
                     </div>
+                    {locked && (
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.55rem" }}>
+                        {clearanceLevel === 0
+                          ? "Finish Orientation and pass the Junior Developer Qualification to unlock CL1 Cases."
+                          : clearanceLevel === undefined
+                            ? "Clearance unavailable. This Case stays locked."
+                            : `Earn CL-${c.min_clearance} to begin this Case.`}
+                      </div>
+                    )}
                     {blockedByActiveCase && <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.55rem" }}>Finish your active case before starting another.</div>}
                   </Card>
                 );

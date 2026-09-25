@@ -1,6 +1,6 @@
--- Migration 013: Training Mission and qualification backend foundation.
--- This migration is additive. It does not seed curriculum, change Case File
--- behavior, or modify existing student clearance values.
+-- Migration 013: first complete Orientation and qualification vertical slice.
+-- This migration preserves existing student clearance values while adding the
+-- CL1 qualification content and database-level Case clearance enforcement.
 
 BEGIN;
 
@@ -9,6 +9,11 @@ BEGIN;
 -- rewrite rows.
 ALTER TABLE public.student_profiles
   ALTER COLUMN clearance_level SET DEFAULT 0;
+
+ALTER TABLE public.student_profiles
+  ADD COLUMN IF NOT EXISTS orientation_sections_completed text[]
+    NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS orientation_completed_at timestamptz;
 
 DO $$
 BEGIN
@@ -21,6 +26,34 @@ BEGIN
     ALTER TABLE public.student_profiles
       ADD CONSTRAINT student_profiles_clearance_level_check
       CHECK (clearance_level BETWEEN 0 AND 5);
+  END IF;
+END;
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'public.student_profiles'::regclass
+      AND conname = 'student_profiles_orientation_sections_check'
+  ) THEN
+    ALTER TABLE public.student_profiles
+      ADD CONSTRAINT student_profiles_orientation_sections_check CHECK (
+        orientation_sections_completed <@ ARRAY[
+          'how-spark-works',
+          'scratch-basics',
+          'build-test-explain'
+        ]::text[]
+        AND (
+          orientation_completed_at IS NULL
+          OR orientation_sections_completed @> ARRAY[
+            'how-spark-works',
+            'scratch-basics',
+            'build-test-explain'
+          ]::text[]
+        )
+      );
   END IF;
 END;
 $$;
@@ -405,6 +438,7 @@ CREATE TABLE IF NOT EXISTS public.qualification_definitions (
   title            text NOT NULL,
   description      text NOT NULL,
   target_clearance smallint NOT NULL,
+  requires_orientation boolean NOT NULL DEFAULT false,
   task_brief       text NOT NULL,
   requirements     jsonb NOT NULL DEFAULT '[]'::jsonb,
   rubric           jsonb NOT NULL DEFAULT '[]'::jsonb,
@@ -451,6 +485,10 @@ CREATE TABLE IF NOT EXISTS public.student_qualification_attempts (
                     REFERENCES public.sessions(id) ON DELETE RESTRICT,
   attempt_number    integer NOT NULL,
   status            public.qualification_attempt_status NOT NULL DEFAULT 'in_progress',
+  project_url       text,
+  change_summary    text,
+  testing_summary   text,
+  check_results     jsonb NOT NULL DEFAULT '{}'::jsonb,
   started_at        timestamptz NOT NULL DEFAULT now(),
   submitted_at      timestamptz,
   criterion_results jsonb NOT NULL DEFAULT '{}'::jsonb,
@@ -464,6 +502,19 @@ CREATE TABLE IF NOT EXISTS public.student_qualification_attempts (
     UNIQUE (student_id, qualification_id, attempt_number),
   CONSTRAINT student_qualification_attempts_criterion_results_shape_check
     CHECK (jsonb_typeof(criterion_results) = 'object'),
+  CONSTRAINT student_qualification_attempts_project_url_check CHECK (
+    project_url IS NULL
+    OR project_url ~ '^https://scratch[.]mit[.]edu/projects/[0-9]+/?([?#].*)?$'
+  ),
+  CONSTRAINT student_qualification_attempts_change_summary_length_check CHECK (
+    change_summary IS NULL OR char_length(btrim(change_summary)) BETWEEN 1 AND 500
+  ),
+  CONSTRAINT student_qualification_attempts_testing_summary_length_check CHECK (
+    testing_summary IS NULL OR char_length(btrim(testing_summary)) BETWEEN 1 AND 500
+  ),
+  CONSTRAINT student_qualification_attempts_check_results_shape_check CHECK (
+    jsonb_typeof(check_results) = 'object'
+  ),
   CONSTRAINT student_qualification_attempts_state_metadata_check CHECK (
     (
       status = 'in_progress'::public.qualification_attempt_status
@@ -488,6 +539,64 @@ CREATE TABLE IF NOT EXISTS public.student_qualification_attempts (
     )
   )
 );
+
+-- The first complete qualification slice. The stable code is the application
+-- lookup key; the UUID is stable so disposable environments receive the same
+-- definition without creating duplicates.
+INSERT INTO public.qualification_definitions (
+  id,
+  code,
+  title,
+  description,
+  target_clearance,
+  requires_orientation,
+  task_brief,
+  requirements,
+  rubric,
+  sequence_order,
+  status
+) VALUES (
+  '01300000-0000-4000-8000-000000000001',
+  'junior-developer-qualification',
+  'Junior Developer Qualification',
+  'Remix the Spark Code starter project, complete the CL1 task, test it, and explain your work.',
+  1,
+  true,
+  'Open and Remix the Spark Code starter project. Keep its starter behavior, add the required movement and message, make one personal change, test your work, and submit the shared URL for your remix.',
+  jsonb_build_object(
+    'starter_project_url', 'https://scratch.mit.edu/projects/1384855314/',
+    'starter_behavior', jsonb_build_array(
+      'when green flag clicked',
+      'go to x: -120 y: 0',
+      'say "Ready to work!" for 2 seconds'
+    ),
+    'student_steps', jsonb_build_array(
+      'Open the starter project.',
+      'Click Remix to save a copy in your Scratch account.',
+      'Keep the starter behavior that is already in the project.',
+      'Add code so the sprite moves from the left side of the Stage to the right side when the green flag is clicked.',
+      'Make the sprite say a message after moving.',
+      'Add one small personal change of your own.',
+      'Test your finished project.',
+      'Share your remix and submit its Scratch project URL.'
+    ),
+    'checks', jsonb_build_array(
+      jsonb_build_object('code', 'green_flag_starts', 'label', 'The green flag starts the project correctly.'),
+      jsonb_build_object('code', 'sprite_moves_across_stage', 'label', 'The sprite moves across the Stage.'),
+      jsonb_build_object('code', 'message_after_moving', 'label', 'The sprite says a message after moving.'),
+      jsonb_build_object('code', 'personal_change_tested', 'label', 'I added and tested one change of my own.')
+    )
+  ),
+  jsonb_build_array(
+    jsonb_build_object('code', 'required_behavior', 'label', 'Required project behavior works'),
+    jsonb_build_object('code', 'evidence_present', 'label', 'Required evidence is present'),
+    jsonb_build_object('code', 'explanation_matches', 'label', 'Explanation matches the submitted work'),
+    jsonb_build_object('code', 'testing_shown', 'label', 'Student shows they tested the project')
+  ),
+  1,
+  'published'
+)
+ON CONFLICT (code) DO NOTHING;
 
 CREATE INDEX IF NOT EXISTS idx_training_missions_status_sequence
   ON public.training_missions (status, sequence_order);
@@ -637,6 +746,7 @@ BEGIN
   ) AND (
     NEW.code IS DISTINCT FROM OLD.code
     OR NEW.target_clearance IS DISTINCT FROM OLD.target_clearance
+    OR NEW.requires_orientation IS DISTINCT FROM OLD.requires_orientation
     OR public.qualification_rubric_codes(NEW.rubric)
        IS DISTINCT FROM public.qualification_rubric_codes(OLD.rubric)
   ) THEN
@@ -748,6 +858,64 @@ AS $$
       'volunteer'::public.user_role,
       'instructor'::public.user_role
     );
+$$;
+
+CREATE OR REPLACE FUNCTION public.complete_orientation_section(p_section_code text)
+RETURNS public.student_profiles
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  caller_id uuid := auth.uid();
+  profile_row public.student_profiles%ROWTYPE;
+  completed_sections text[];
+BEGIN
+  IF caller_id IS NULL
+    OR public.current_reconciled_role() IS DISTINCT FROM 'student'::public.user_role
+    OR NOT public.may_access_normal_app()
+  THEN
+    RAISE EXCEPTION 'Reconciled student role required' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_section_code IS NULL OR p_section_code NOT IN (
+    'how-spark-works',
+    'scratch-basics',
+    'build-test-explain'
+  ) THEN
+    RAISE EXCEPTION 'Unknown Orientation section' USING ERRCODE = '22023';
+  END IF;
+
+  SELECT orientation_sections_completed
+  INTO completed_sections
+  FROM public.student_profiles
+  WHERE user_id = caller_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Student profile not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF NOT (p_section_code = ANY(completed_sections)) THEN
+    completed_sections := array_append(completed_sections, p_section_code);
+  END IF;
+
+  UPDATE public.student_profiles
+  SET orientation_sections_completed = completed_sections,
+      orientation_completed_at = CASE
+        WHEN completed_sections @> ARRAY[
+          'how-spark-works',
+          'scratch-basics',
+          'build-test-explain'
+        ]::text[]
+        THEN COALESCE(orientation_completed_at, now())
+        ELSE NULL
+      END
+  WHERE user_id = caller_id
+  RETURNING * INTO profile_row;
+
+  RETURN profile_row;
+END;
 $$;
 
 CREATE OR REPLACE FUNCTION public.start_training_mission(p_mission_id uuid)
@@ -1239,6 +1407,7 @@ DECLARE
   caller_id uuid := auth.uid();
   next_attempt_number integer;
   attempt_row public.student_qualification_attempts%ROWTYPE;
+  qualification_row public.qualification_definitions%ROWTYPE;
 BEGIN
   IF caller_id IS NULL
     OR public.current_reconciled_role() IS DISTINCT FROM 'student'::public.user_role
@@ -1250,7 +1419,8 @@ BEGIN
   -- Serialize attempt-number allocation and open-attempt checks per student.
   PERFORM 1 FROM public.users WHERE id = caller_id FOR UPDATE;
 
-  PERFORM 1
+  SELECT qualification.*
+  INTO qualification_row
   FROM public.qualification_definitions AS qualification
   WHERE qualification.id = p_qualification_id
     AND qualification.status = 'published'::public.qualification_definition_status
@@ -1258,6 +1428,23 @@ BEGIN
 
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Published qualification not found' USING ERRCODE = 'P0002';
+  END IF;
+
+  IF qualification_row.requires_orientation
+    AND NOT EXISTS (
+      SELECT 1
+      FROM public.student_profiles AS profile
+      WHERE profile.user_id = caller_id
+        AND profile.orientation_completed_at IS NOT NULL
+        AND profile.orientation_sections_completed @> ARRAY[
+          'how-spark-works',
+          'scratch-basics',
+          'build-test-explain'
+        ]::text[]
+    )
+  THEN
+    RAISE EXCEPTION 'Complete Orientation before starting this qualification'
+      USING ERRCODE = '42501';
   END IF;
 
   IF EXISTS (
@@ -1328,6 +1515,78 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION public.save_qualification_evidence(
+  p_attempt_id uuid,
+  p_project_url text,
+  p_change_summary text,
+  p_testing_summary text,
+  p_check_results jsonb
+)
+RETURNS public.student_qualification_attempts
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  caller_id uuid := auth.uid();
+  attempt_row public.student_qualification_attempts%ROWTYPE;
+BEGIN
+  IF caller_id IS NULL
+    OR public.current_reconciled_role() IS DISTINCT FROM 'student'::public.user_role
+    OR NOT public.may_access_normal_app()
+  THEN
+    RAISE EXCEPTION 'Reconciled student role required' USING ERRCODE = '42501';
+  END IF;
+
+  IF p_project_url IS NOT NULL
+    AND btrim(p_project_url) <> ''
+    AND btrim(p_project_url) !~ '^https://scratch[.]mit[.]edu/projects/[0-9]+/?([?#].*)?$'
+  THEN
+    RAISE EXCEPTION 'Enter a valid shared Scratch project URL'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_change_summary IS NOT NULL AND char_length(btrim(p_change_summary)) > 500 THEN
+    RAISE EXCEPTION 'Change answer must be 500 characters or fewer'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_testing_summary IS NOT NULL AND char_length(btrim(p_testing_summary)) > 500 THEN
+    RAISE EXCEPTION 'Testing answer must be 500 characters or fewer'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_check_results IS NULL OR jsonb_typeof(p_check_results) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'Check results must be a JSON object' USING ERRCODE = '22023';
+  END IF;
+
+  UPDATE public.student_qualification_attempts AS attempt
+  SET status = 'in_progress'::public.qualification_attempt_status,
+      project_url = NULLIF(btrim(p_project_url), ''),
+      change_summary = NULLIF(btrim(p_change_summary), ''),
+      testing_summary = NULLIF(btrim(p_testing_summary), ''),
+      check_results = p_check_results,
+      submitted_at = NULL,
+      reviewed_by = NULL,
+      reviewed_at = NULL,
+      criterion_results = '{}'::jsonb
+  WHERE attempt.id = p_attempt_id
+    AND attempt.student_id = caller_id
+    AND attempt.status IN (
+      'in_progress'::public.qualification_attempt_status,
+      'needs_retry'::public.qualification_attempt_status
+    )
+  RETURNING attempt.* INTO attempt_row;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Editable qualification attempt not found for student'
+      USING ERRCODE = 'P0002';
+  END IF;
+
+  RETURN attempt_row;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION public.submit_qualification(p_attempt_id uuid)
 RETURNS public.student_qualification_attempts
 LANGUAGE plpgsql
@@ -1351,9 +1610,29 @@ BEGIN
   WHERE attempt.id = p_attempt_id
     AND attempt.student_id = caller_id
     AND attempt.status = 'in_progress'::public.qualification_attempt_status
+    AND attempt.project_url IS NOT NULL
+    AND attempt.change_summary IS NOT NULL
+    AND attempt.testing_summary IS NOT NULL
+    AND attempt.check_results = jsonb_build_object(
+      'green_flag_starts', true,
+      'sprite_moves_across_stage', true,
+      'message_after_moving', true,
+      'personal_change_tested', true
+    )
   RETURNING attempt.* INTO attempt_row;
 
   IF NOT FOUND THEN
+    IF EXISTS (
+      SELECT 1
+      FROM public.student_qualification_attempts AS attempt
+      WHERE attempt.id = p_attempt_id
+        AND attempt.student_id = caller_id
+        AND attempt.status = 'in_progress'::public.qualification_attempt_status
+    ) THEN
+      RAISE EXCEPTION 'Project URL, both short answers, and all checks are required'
+        USING ERRCODE = '23514';
+    END IF;
+
     RAISE EXCEPTION 'In-progress qualification attempt not found for student'
       USING ERRCODE = 'P0002';
   END IF;
@@ -1389,6 +1668,13 @@ BEGIN
 
   IF p_outcome NOT IN ('needs_retry', 'passed') THEN
     RAISE EXCEPTION 'Qualification outcome must be needs_retry or passed'
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_outcome = 'needs_retry'
+    AND COALESCE(char_length(btrim(p_feedback)), 0) = 0
+  THEN
+    RAISE EXCEPTION 'Retry feedback must tell the student what to fix'
       USING ERRCODE = '22023';
   END IF;
 
@@ -1604,6 +1890,37 @@ CREATE POLICY "qualification_attempts_read_authorized"
     OR public.instructor_owns_session(session_id)
   );
 
+-- Preserve the released direct-insert Case workflow while enforcing clearance
+-- at its database boundary. Missing profiles and missing clearance fail closed
+-- because the trusted profile/Case join produces no qualifying row.
+DROP POLICY IF EXISTS "progress_insert_student" ON public.case_progress;
+CREATE POLICY "progress_insert_student" ON public.case_progress
+  FOR INSERT TO authenticated
+  WITH CHECK (
+    (SELECT public.may_access_normal_app())
+    AND COALESCE(
+      ((SELECT auth.jwt()) -> 'app_metadata' ->> 'role') = 'student',
+      false
+    )
+    AND (SELECT auth.uid()) = student_id
+    AND public.has_joined_session(session_id)
+    AND EXISTS (
+      SELECT 1
+      FROM public.sessions AS joined_session
+      WHERE joined_session.id = case_progress.session_id
+        AND joined_session.case_ids @> ARRAY[case_progress.case_id]
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM public.student_profiles AS trusted_profile
+      JOIN public.cases AS assigned_case
+        ON assigned_case.id = case_progress.case_id
+      WHERE trusted_profile.user_id = (SELECT auth.uid())
+        AND trusted_profile.clearance_level IS NOT NULL
+        AND trusted_profile.clearance_level >= assigned_case.min_clearance
+    )
+  );
+
 -- Browser access is deliberately SELECT-only. All state changes flow through
 -- the narrow SECURITY DEFINER RPCs above. service_role retains controlled
 -- administrative access for future migrations and server tooling.
@@ -1675,6 +1992,8 @@ REVOKE ALL ON FUNCTION public.validate_skill_verification_provenance()
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.current_reconciled_role()
   FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.complete_orientation_section(text)
+  FROM PUBLIC, anon, authenticated;
 
 GRANT EXECUTE ON FUNCTION public.training_steps_are_valid(jsonb, boolean)
   TO service_role;
@@ -1684,6 +2003,8 @@ GRANT EXECUTE ON FUNCTION public.qualification_rubric_is_valid(jsonb, boolean)
 GRANT EXECUTE ON FUNCTION public.qualification_rubric_codes(jsonb)
   TO service_role;
 GRANT EXECUTE ON FUNCTION public.current_reconciled_role()
+  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.complete_orientation_section(text)
   TO authenticated;
 
 REVOKE ALL ON FUNCTION public.start_training_mission(uuid)
@@ -1699,6 +2020,8 @@ REVOKE ALL ON FUNCTION public.return_training_mission(uuid, text)
 REVOKE ALL ON FUNCTION public.instructor_verify_skill(uuid, uuid, uuid, text)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.start_qualification(uuid, uuid)
+  FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.save_qualification_evidence(uuid, text, text, text, jsonb)
   FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.submit_qualification(uuid)
   FROM PUBLIC, anon, authenticated;
@@ -1717,6 +2040,8 @@ GRANT EXECUTE ON FUNCTION public.return_training_mission(uuid, text)
 GRANT EXECUTE ON FUNCTION public.instructor_verify_skill(uuid, uuid, uuid, text)
   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.start_qualification(uuid, uuid)
+  TO authenticated;
+GRANT EXECUTE ON FUNCTION public.save_qualification_evidence(uuid, text, text, text, jsonb)
   TO authenticated;
 GRANT EXECUTE ON FUNCTION public.submit_qualification(uuid) TO authenticated;
 GRANT EXECUTE ON FUNCTION public.review_qualification(uuid, jsonb, text, text)

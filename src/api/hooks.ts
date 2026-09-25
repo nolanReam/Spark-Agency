@@ -1,14 +1,91 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "./client";
-import { instructorQueryKeys } from "./queryKeys";
+import { instructorQueryKeys, studentQueryKeys, trainingQueryKeys } from "./queryKeys";
 
 // ─── Auth & Profile ──────────────────────────────────────
 
 export function useStudentProfile(userId: string) {
   return useQuery({
-    queryKey: ["student-profile", userId],
+    queryKey: studentQueryKeys.profile(userId),
     queryFn: () => api.getStudentProfile(userId),
     enabled: !!userId,
+    refetchInterval: userId ? 10_000 : false,
+  });
+}
+
+export function useJuniorQualificationDefinition() {
+  return useQuery({
+    queryKey: trainingQueryKeys.juniorDefinition,
+    queryFn: api.getJuniorQualification,
+  });
+}
+
+export function useStudentQualificationAttempt(userId: string) {
+  return useQuery({
+    queryKey: studentQueryKeys.juniorQualification(userId),
+    queryFn: () => api.getStudentQualificationAttempt(userId),
+    enabled: !!userId,
+    refetchInterval: userId ? 4_000 : false,
+  });
+}
+
+export function useCompleteOrientationSection(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ sectionCode }: { sectionCode: string }) =>
+      api.completeOrientationSection(sectionCode),
+    onSuccess: (profile) => {
+      qc.setQueryData(studentQueryKeys.profile(userId), profile);
+      qc.invalidateQueries({ queryKey: studentQueryKeys.juniorQualification(userId) });
+    },
+  });
+}
+
+export function useStartJuniorQualification(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ qualificationId, sessionId }: { qualificationId: string; sessionId: string }) =>
+      api.startJuniorQualification(qualificationId, sessionId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: studentQueryKeys.juniorQualification(userId) }),
+  });
+}
+
+export function useSaveQualificationEvidence(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.saveQualificationEvidence,
+    onSuccess: attempt => qc.setQueryData(studentQueryKeys.juniorQualification(userId), attempt),
+  });
+}
+
+export function useSubmitQualification(userId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ attemptId }: { attemptId: string }) => api.submitQualification(attemptId),
+    onSuccess: attempt => qc.setQueryData(studentQueryKeys.juniorQualification(userId), attempt),
+  });
+}
+
+export function useQualificationReviewQueue(instructorId: string) {
+  return useQuery({
+    queryKey: instructorQueryKeys.qualificationQueue(instructorId),
+    queryFn: api.getQualificationReviewQueue,
+    enabled: !!instructorId,
+    refetchInterval: instructorId ? 10_000 : false,
+  });
+}
+
+export function useReviewQualification(instructorId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.reviewQualification,
+    onSuccess: async attempt => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: instructorQueryKeys.qualificationQueue(instructorId) }),
+        qc.invalidateQueries({ queryKey: studentQueryKeys.profile(attempt.student_id) }),
+        qc.invalidateQueries({ queryKey: studentQueryKeys.juniorQualification(attempt.student_id) }),
+      ]);
+    },
   });
 }
 
@@ -109,7 +186,7 @@ export function useActiveSession(instructorId: string) {
 
 export function useJoinedLiveSession(userId: string) {
   return useQuery({
-    queryKey: ["joined-live-session", userId],
+    queryKey: studentQueryKeys.joinedSession(userId),
     queryFn: () => api.getJoinedLiveSession(userId),
     enabled: !!userId,
     refetchInterval: userId ? 12_000 : false,
@@ -150,13 +227,13 @@ export function useSessionCases(sessionId: string) {
   });
 }
 
-export function useJoinSession() {
+export function useJoinSession(userId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ code }: { code: string }) => api.joinSession(code),
     onSuccess: async () => {
       await Promise.all([
-        qc.invalidateQueries({ queryKey: ["joined-live-session"] }),
+        qc.invalidateQueries({ queryKey: studentQueryKeys.joinedSession(userId) }),
         qc.invalidateQueries({ queryKey: ["session-participants"] }),
       ]);
     },
@@ -165,13 +242,13 @@ export function useJoinSession() {
 
 // ─── Case Progress ───────────────────────────────────────
 
-export function useCreateCaseProgress() {
+export function useCreateCaseProgress(userId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ studentId, caseId, sessionId }: { studentId: string; caseId: string; sessionId: string }) =>
       api.createCaseProgress(studentId, caseId, sessionId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["student-progress"] });
+      qc.invalidateQueries({ queryKey: ["student-progress", userId] });
     },
   });
 }

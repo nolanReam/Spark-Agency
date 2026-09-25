@@ -256,9 +256,9 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div style={{ display: "flex", minHeight: "100vh", background: "var(--surface)", color: "var(--text)", fontFamily: "'Inter', 'IBM Plex Sans', sans-serif" }}>
-        {role === "student" && <StudentShell {...roleProps} />}
-        {role === "volunteer" && <VolunteerShell {...roleProps} />}
-        {role === "instructor" && <InstructorShell {...roleProps} />}
+        {role === "student" && <StudentShell key={session.user.id} {...roleProps} />}
+        {role === "volunteer" && <VolunteerShell key={session.user.id} {...roleProps} />}
+        {role === "instructor" && <InstructorShell key={session.user.id} {...roleProps} />}
       </div>
       <FloatingThemeToggle theme={theme} setTheme={toggleTheme} />
     </QueryClientProvider>
