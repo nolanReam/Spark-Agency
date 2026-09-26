@@ -1,9 +1,9 @@
 import { FileText, Target, Wrench, ListChecks, TrendingUp, Lightbulb } from "lucide-react";
-import { Badge, Card, SectionLabel } from "../../components/ui";
+import { Badge, Card, PlainText, SectionLabel } from "../../components/ui";
 
 interface LaneDef { name: string; detail: string; available: boolean; }
 interface CaseData {
-  title?: string; client?: string; brief: string;
+  title?: string; client?: string; brief: string; mission: string;
   lanes: LaneDef[]; tools: string[]; initRules: string[];
   conceptWeights: Record<string, number>;
   transferHint: string;
@@ -14,7 +14,12 @@ export function CaseDossier({ caseData, showTransferHint }: { caseData: CaseData
     <div style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
       <Card style={{ padding: "1.1rem" }}>
         <SectionLabel icon={FileText}>Client brief</SectionLabel>
-        <p style={{ fontSize: "0.88rem", lineHeight: 1.6, margin: "0.5rem 0 0" }}>{caseData.brief}</p>
+        <PlainText style={{ fontSize: "0.88rem", lineHeight: 1.6, margin: "0.5rem 0 0" }}>{caseData.brief}</PlainText>
+      </Card>
+
+      <Card style={{ padding: "1.1rem" }}>
+        <SectionLabel icon={Target}>Mission</SectionLabel>
+        <PlainText style={{ fontSize: "0.88rem", lineHeight: 1.6, margin: "0.5rem 0 0" }}>{caseData.mission}</PlainText>
       </Card>
 
       <Card style={{ padding: "1.1rem" }}>
@@ -23,13 +28,10 @@ export function CaseDossier({ caseData, showTransferHint }: { caseData: CaseData
           <strong>Required</strong> is the case — everyone builds this. <strong>Extension</strong> and <strong>Challenge</strong> are optional add-ons to the same project.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.55rem" }}>
-          {caseData.lanes.map(lane => (
-            <div key={lane.name} style={{ display: "flex", gap: "0.55rem", alignItems: "flex-start", opacity: lane.available === false ? 0.45 : 1 }}>
+          {caseData.lanes.filter(lane => lane.available).map(lane => (
+            <div key={lane.name} style={{ display: "flex", gap: "0.55rem", alignItems: "flex-start" }}>
               <Badge tone={lane.name === "Required" ? "brand" : lane.name === "Extension" ? "accent" : "danger"}>{lane.name}</Badge>
-              <p style={{ fontSize: "0.83rem", lineHeight: 1.5, margin: 0 }}>
-                {lane.detail}
-                {lane.available === false && <em style={{ color: "var(--text-muted)" }}> — not available for this case</em>}
-              </p>
+              <PlainText style={{ fontSize: "0.83rem", lineHeight: 1.5, margin: 0 }}>{lane.detail}</PlainText>
             </div>
           ))}
         </div>
@@ -69,9 +71,9 @@ export function CaseDossier({ caseData, showTransferHint }: { caseData: CaseData
       {showTransferHint && (
         <Card style={{ padding: "1.1rem", background: "var(--surface-2)", borderStyle: "dashed" }}>
           <SectionLabel icon={Lightbulb} muted>Transfer hint</SectionLabel>
-          <p style={{ fontSize: "0.83rem", lineHeight: 1.6, margin: "0.5rem 0 0", color: "var(--text-muted)", fontStyle: "italic" }}>
+          <PlainText style={{ fontSize: "0.83rem", lineHeight: 1.6, margin: "0.5rem 0 0", color: "var(--text-muted)", fontStyle: "italic" }}>
             {caseData.transferHint}
-          </p>
+          </PlainText>
         </Card>
       )}
     </div>

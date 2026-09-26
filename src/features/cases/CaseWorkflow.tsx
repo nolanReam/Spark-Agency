@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { ArrowLeft, ListChecks, Loader2 } from "lucide-react";
-import { Badge, Card, SectionLabel } from "../../components/ui";
+import { Badge, Card, PlainText, SectionLabel } from "../../components/ui";
 import { ReturnedForRevisionPanel, StageRail } from "../../components/shared";
 import { CaseDossier } from "./CaseDossier";
 import { StageActionPanel } from "./StageActionPanel";
@@ -190,6 +190,7 @@ export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _exte
 
   const caseData = {
     brief: activeCase?.client_brief ?? "",
+    mission: activeCase?.mission ?? "",
     lanes: laneDefs,
     tools: activeCase?.tools_allowed ?? [],
     initRules: activeCase?.constraints
@@ -237,9 +238,9 @@ export function CaseWorkflow({ sessionId, stage: _externalStage, setStage: _exte
             <h1 style={{ fontFamily: "'Space Grotesk',sans-serif", fontSize: "1.4rem", fontWeight: 700, margin: 0 }}>
               {activeCase.title}
             </h1>
-            <p style={{ margin: "0.2rem 0 0", color: "var(--text-muted)", fontSize: "0.85rem" }}>
+            <PlainText style={{ margin: "0.2rem 0 0", color: "var(--text-muted)", fontSize: "0.85rem" }}>
               Client: {activeCase.client_brief}
-            </p>
+            </PlainText>
           </div>
           <Card style={{ padding: "1rem 1.25rem", marginBottom: "1.25rem" }}>
             <SectionLabel icon={ListChecks}>Case progress</SectionLabel>

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Wrench, Hourglass, UserCheck, CheckCircle2, Lock, Send, Lightbulb, FlaskConical } from "lucide-react";
-import { Badge, Card, Btn, SectionLabel, Textarea, Field } from "../../components/ui";
+import { Badge, Card, Btn, SectionLabel, Textarea, Field, PlainText } from "../../components/ui";
 import type { StageKey } from "../../lib/constants";
 
 interface CaseData {
@@ -112,7 +112,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
             <Lock size={16} color="var(--accent)" />
             <span style={{ fontSize: "0.72rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--accent)" }}>Predict & Prove</span>
           </div>
-          <p style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 1rem" }}>{caseData.predictPrompt}</p>
+          <PlainText style={{ fontSize: "0.87rem", lineHeight: 1.6, margin: "0 0 1rem" }}>{caseData.predictPrompt}</PlainText>
           <Field label="I think...">
             <Textarea rows={2} value={prediction.think} placeholder="...the result will be..." readOnly={readOnly} onChange={e => setPrediction({ ...prediction, think: e.target.value })} />
           </Field>
@@ -184,7 +184,7 @@ export function StageActionPanel({ stage, setStage, caseData, prediction, setPre
       return (
         <Card style={{ padding: "1.25rem" }}>
           <SectionLabel icon={Lightbulb}>Reflection</SectionLabel>
-          <p style={{ fontSize: "0.83rem", color: "var(--text-muted)", margin: "0.5rem 0 0.75rem", lineHeight: 1.6 }}>{caseData.reflectionPrompt}</p>
+          <PlainText style={{ fontSize: "0.83rem", color: "var(--text-muted)", margin: "0.5rem 0 0.75rem", lineHeight: 1.6 }}>{caseData.reflectionPrompt}</PlainText>
           <Textarea rows={4} value={reflectionText} placeholder="My prediction was... what actually happened was..." readOnly={readOnly} onChange={e => setReflectionText(e.target.value)} />
           <div style={{ marginTop: "0.75rem" }}><Btn variant="primary" disabled={readOnly} onClick={() => setStage("complete")}>{readOnly ? "View reflection log" : "Submit reflection & complete case"}</Btn></div>
         </Card>
